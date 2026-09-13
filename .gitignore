@@ -1,0 +1,9 @@
+node_modules/
+dist/
+output/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+data/
+.env
+.playwright-mcp/
