@@ -522,6 +522,7 @@ function App() {
       </header>
 
       <section className="page-content">
+        {import.meta.env.PROD && <div className="prototype-notice" role="note">Prototype preview: dashboard examples are simulated and are not clinical records. Do not enter real patient information.</div>}
         {isDashboard ? <>
           <div className="page-heading">
             <div><h1>Good morning, {profile.name}</h1><p className="page-subtitle">{role === 'Patient' ? 'Your care plan, appointments, and next steps in one place.' : "Here is today's care overview"}</p></div>
@@ -639,3 +640,4 @@ function Modal({ type, onClose, onAction }: { type: 'appointment' | 'emergency';
 }
 
 export default App
+

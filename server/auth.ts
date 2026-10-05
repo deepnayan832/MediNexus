@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createSession, deleteSession, getUserBySession, type Role, type User } from './db'
-import { clearSessionCookie, parseCookies, sendError, setSessionCookie } from './http'
+import { createSession, deleteSession, getUserBySession, type Role, type User } from './db.js'
+import { clearSessionCookie, parseCookies, sendError, setSessionCookie } from './http.js'
 
 const sessionCookie = 'medinexus_session'
 
@@ -43,3 +43,4 @@ export function requireRole(user: User, response: ServerResponse, roles: Role[])
   }
   return true
 }
+

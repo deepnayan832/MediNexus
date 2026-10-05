@@ -1,9 +1,16 @@
 node_modules/
+.tools/
 dist/
+dist-server/
 output/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
 data/
 .env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
 .playwright-mcp/
+

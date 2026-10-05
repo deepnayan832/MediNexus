@@ -5,6 +5,7 @@ import {
   createAppointmentForPatient,
   createHealthMetric,
   createUser,
+  databaseIsReady,
   getDashboardSummary,
   getUserByEmail,
   listAppointments,
@@ -15,39 +16,94 @@ import {
   markNotificationRead,
   normalizeEmail,
   verifyPassword,
-} from './db'
-import { clearSession, currentUser, requireRole, requireUser, sessionForUser } from './auth'
-import { asNumber, asString, readJson, sendError, sendJson } from './http'
+} from './db.js'
+import { clearSession, currentUser, requireRole, requireUser, sessionForUser } from './auth.js'
+import { asNumber, asString, readJson, sendError, sendJson } from './http.js'
 
-const port = Number(process.env.PORT ?? 8787)
-const allowedOrigin = process.env.MEDINEXUS_CORS_ORIGIN ?? 'http://127.0.0.1:5173'
+const isProduction = process.env.NODE_ENV === 'production'
+const portValue = process.env.PORT ?? '8787'
+if (!/^\d+$/.test(portValue) || Number(portValue) < 1 || Number(portValue) > 65535) {
+  throw new Error('PORT must be an integer between 1 and 65535.')
+}
+const port = Number(portValue)
+const host = process.env.HOST || (isProduction ? '0.0.0.0' : '127.0.0.1')
+
+function readAllowedOrigins() {
+  const configuredOrigins = process.env.MEDINEXUS_CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean)
+  const origins = configuredOrigins?.length
+    ? configuredOrigins
+    : isProduction
+      ? []
+      : ['http://127.0.0.1:5173', 'http://localhost:5173']
+
+  const validatedOrigins = origins.map((origin) => {
+    let parsed: URL
+    try {
+      parsed = new URL(origin)
+    } catch {
+      throw new Error('MEDINEXUS_CORS_ORIGIN must contain comma-separated origin URLs.')
+    }
+    const localDevelopmentOrigin = !isProduction && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+    if (parsed.origin !== origin || (parsed.protocol !== 'https:' && !(localDevelopmentOrigin && parsed.protocol === 'http:'))) {
+      throw new Error('MEDINEXUS_CORS_ORIGIN entries must be HTTPS origins (HTTP is allowed only for local development).')
+    }
+    return origin
+  })
+
+  if (isProduction && validatedOrigins.length === 0) {
+    throw new Error('Set MEDINEXUS_CORS_ORIGIN to the HTTPS frontend origin before starting in production.')
+  }
+  return new Set(validatedOrigins)
+}
+
+const allowedOrigins = readAllowedOrigins()
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const metricTypes = new Set(['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'])
 
-function corsHeaders(request: IncomingMessage) {
-  const origin = request.headers.origin
-  return {
-    'Access-Control-Allow-Origin': origin === allowedOrigin ? origin : allowedOrigin,
-    'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    Vary: 'Origin',
-  }
+function setCorsHeaders(response: ServerResponse, origin: string) {
+  response.setHeader('Access-Control-Allow-Origin', origin)
+  response.setHeader('Access-Control-Allow-Credentials', 'true')
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  response.setHeader('Vary', 'Origin')
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse) {
-  Object.entries(corsHeaders(request)).forEach(([key, value]) => response.setHeader(key, value))
+  const origin = request.headers.origin
+  response.setHeader('Vary', 'Origin')
+  if (origin && !allowedOrigins.has(origin)) {
+    sendError(response, 403, 'This origin is not allowed to access the MediNexus API.', 'CORS_ORIGIN_NOT_ALLOWED')
+    return
+  }
+  if (origin) setCorsHeaders(response, origin)
+
   if (request.method === 'OPTIONS') {
+    if (!origin) {
+      sendError(response, 403, 'A valid origin is required for this preflight request.', 'CORS_ORIGIN_NOT_ALLOWED')
+      return
+    }
     response.writeHead(204)
     response.end()
     return
   }
 
-  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
+  const url = new URL(request.url ?? '/', 'http://medinexus.local')
   const path = url.pathname
 
   if (request.method === 'GET' && path === '/api/health') {
-    sendJson(response, 200, { service: 'medinexus-api', status: 'ok', database: 'sqlite', timestamp: new Date().toISOString() })
+    let ready = false
+    try {
+      ready = databaseIsReady()
+    } catch {
+      // Return an opaque degraded status. Database details belong in server logs, not the public response.
+    }
+    sendJson(response, ready ? 200 : 503, {
+      service: 'medinexus-api',
+      status: ready ? 'ok' : 'degraded',
+      database: ready ? 'connected' : 'unavailable',
+      timestamp: new Date().toISOString(),
+      version: process.env.npm_package_version ?? '0.1.0',
+    })
     return
   }
 
@@ -212,9 +268,25 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 }
 
 const server = createServer((request, response) => {
-  handle(request, response).catch(() => sendError(response, 500, 'An unexpected server error occurred.', 'INTERNAL_ERROR'))
+  handle(request, response).catch((error: unknown) => {
+    console.error('MediNexus request failed', {
+      method: request.method ?? 'UNKNOWN',
+      errorType: error instanceof Error ? error.name : 'UnknownError',
+    })
+    if (response.headersSent) {
+      response.destroy()
+      return
+    }
+    sendError(response, 500, 'An unexpected server error occurred.', 'INTERNAL_ERROR')
+  })
 })
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`MediNexus API listening on http://127.0.0.1:${port}`)
+server.on('error', (error: NodeJS.ErrnoException) => {
+  console.error('MediNexus API failed to start', { errorCode: error.code ?? 'UNKNOWN' })
+  process.exitCode = 1
 })
+
+server.listen(port, host, () => {
+  console.log(`MediNexus API listening on ${host}:${port}`)
+})
+

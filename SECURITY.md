@@ -1,21 +1,17 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+| Version | Security updates |
+| --- | --- |
+| Current `0.1.x` development line | Best effort |
+| Earlier versions | Not supported |
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+MediNexus is an early prototype, not a clinical system. It has not undergone a formal security, privacy, or regulatory assessment. Do not submit, store, or process real patient information, credentials, or other sensitive data in public demos or issues. No HIPAA, GDPR, or other compliance claim is made.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Please report suspected vulnerabilities privately through the repository's GitHub security advisory reporting feature when it is enabled. If private reporting is unavailable, contact the repository maintainer privately before opening a public issue. Include steps to reproduce and the affected commit or version. Do not include patient data, passwords, session cookies, tokens, or other secrets in a report.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+The current deployment and data-handling limitations are documented in [README.md](README.md).
+

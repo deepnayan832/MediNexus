@@ -3,10 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
-    "server:dev": "tsx watch server/index.ts",
-    "server:start": "tsx server/index.ts",
+    "server:dev": "node --env-file-if-exists=.env --import tsx --watch server/index.ts",
+    "server:build": "tsc -p tsconfig.server.json",
+    "server:start": "node --env-file-if-exists=.env dist-server/server/index.js",
+    "start": "node --env-file-if-exists=.env dist-server/server/index.js",
     "server:check": "tsc --noEmit -p tsconfig.server.json",
     "test:server": "tsx --test tests/server.test.ts",
     "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.server.json && vite build",
@@ -26,3 +31,4 @@
     "vite": "^8.3.0"
   }
 }
+
