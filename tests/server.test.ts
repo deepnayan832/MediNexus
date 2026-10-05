@@ -35,7 +35,14 @@ before(async () => {
   const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs')
   server = spawn(process.execPath, [tsxCli, 'server/index.ts'], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: String(port), MEDINEXUS_DB_PATH: join(databaseDirectory, 'test.sqlite') },
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      HOST: '0.0.0.0',
+      PORT: String(port),
+      MEDINEXUS_DB_PATH: join(databaseDirectory, 'test.sqlite'),
+      MEDINEXUS_CORS_ORIGIN: 'https://frontend.example',
+    },
     stdio: 'ignore',
   })
   await waitForApi(baseUrl)
@@ -58,6 +65,10 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
     body: JSON.stringify({ name: 'Workflow Patient', email, password: 'SufficientlyLong!42' }),
   })
   assert.equal(registration.response.status, 201)
+  const setCookie = registration.response.headers.get('set-cookie') ?? ''
+  assert.match(setCookie, /HttpOnly/)
+  assert.match(setCookie, /SameSite=None/)
+  assert.match(setCookie, /Secure/)
   const cookie = (registration.response.headers.get('set-cookie') ?? '').split(';')[0]
   assert.match(cookie, /^medinexus_session=/)
 
@@ -72,6 +83,7 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
 
   const metrics = await request('/api/health-metrics', { headers: { Cookie: cookie } })
   assert.equal(metrics.response.status, 200)
+  assert.deepEqual(metrics.body.metrics, [])
   const created = await request('/api/health-metrics', {
     method: 'POST',
     headers: { Cookie: cookie, 'Content-Type': 'application/json' },
@@ -88,6 +100,33 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
   assert.equal(emptySession.body.user, null)
 })
 
+test('reports database readiness and applies the configured credentialed CORS allowlist', async () => {
+  const health = await request('/api/health')
+  assert.equal(health.response.status, 200)
+  assert.equal(health.body.status, 'ok')
+  assert.equal(health.body.database, 'connected')
+  assert.equal(typeof health.body.timestamp, 'string')
+
+  const allowed = await request('/api/health', { headers: { Origin: 'https://frontend.example' } })
+  assert.equal(allowed.response.headers.get('access-control-allow-origin'), 'https://frontend.example')
+  assert.equal(allowed.response.headers.get('access-control-allow-credentials'), 'true')
+
+  const preflight = await request('/api/auth/login', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://frontend.example',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type',
+    },
+  })
+  assert.equal(preflight.response.status, 204)
+  assert.equal(preflight.response.headers.get('access-control-allow-origin'), 'https://frontend.example')
+
+  const denied = await request('/api/health', { headers: { Origin: 'https://untrusted.example' } })
+  assert.equal(denied.response.status, 403)
+  assert.equal(denied.response.headers.get('access-control-allow-origin'), null)
+})
+
 test('rejects unsafe registration and malformed health metrics', async () => {
   const weak = await request('/api/auth/register', {
     method: 'POST',
@@ -95,4 +134,21 @@ test('rejects unsafe registration and malformed health metrics', async () => {
     body: JSON.stringify({ name: 'A', email: 'bad', password: 'short' }),
   })
   assert.equal(weak.response.status, 422)
+
+  const malformed = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"name":',
+  })
+  assert.equal(malformed.response.status, 400)
+  assert.deepEqual(malformed.body.error, { code: 'BAD_REQUEST', message: 'The registration payload is invalid.' })
+
+  const invalidLogin = await request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'unknown@example.test', password: 'wrong-but-long-password' }),
+  })
+  assert.equal(invalidLogin.response.status, 401)
+  assert.deepEqual(invalidLogin.body.error, { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect.' })
 })
+

@@ -2,13 +2,16 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "noEmit": true,
+    "rootDir": ".",
+    "outDir": "dist-server",
+    "noEmit": false,
     "types": ["node"]
   },
   "include": ["server"]
 }
+

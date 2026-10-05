@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { randomBytes, scryptSync } from 'node:crypto'
+import { dirname, isAbsolute, resolve } from 'node:path'
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 
 export type Role = 'Admin' | 'Doctor' | 'Staff' | 'Patient'
@@ -20,11 +20,16 @@ type StoredUser = User & {
 
 type Row = Record<string, unknown>
 
-const databasePath = resolve(process.env.MEDINEXUS_DB_PATH ?? 'data/medinexus.sqlite')
+const configuredDatabasePath = process.env.MEDINEXUS_DB_PATH ?? 'data/medinexus.sqlite'
+if (process.env.NODE_ENV === 'production' && (!process.env.MEDINEXUS_DB_PATH || !isAbsolute(configuredDatabasePath))) {
+  throw new Error('Production requires MEDINEXUS_DB_PATH to be set to an absolute path on persistent storage.')
+}
+
+const databasePath = resolve(configuredDatabasePath)
 mkdirSync(dirname(databasePath), { recursive: true })
 
 export const database = new DatabaseSync(databasePath)
-database.exec('PRAGMA foreign_keys = ON;')
+database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;')
 database.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -102,7 +107,14 @@ export function hashPassword(password: string, salt = randomBytes(16).toString('
 }
 
 export function verifyPassword(password: string, storedHash: string, salt: string) {
-  return scryptSync(password, salt, 64).toString('hex') === storedHash
+  const actualHash = scryptSync(password, salt, 64)
+  const expectedHash = Buffer.from(storedHash, 'hex')
+  return actualHash.length === expectedHash.length && timingSafeEqual(actualHash, expectedHash)
+}
+
+export function databaseIsReady() {
+  const result = database.prepare('SELECT 1 AS ok').get() as { ok?: number } | undefined
+  return result?.ok === 1
 }
 
 function mapUser(row: Row): User {
@@ -165,33 +177,35 @@ export function createUser(input: { email: string; name: string; password: strin
       'info',
       createdAt,
     )
-    database.prepare(`INSERT INTO appointments (id, patient_id, clinician_name, department, appointment_at, room, status) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-      id('apt'),
-      patientId,
-      'Dr. Elena Ruiz',
-      'General Medicine',
-      '2026-09-18T10:30:00.000Z',
-      'Room 301',
-      'Requested',
-    )
-    const baselineMetrics = [
-      ['steps', 6842, 'steps', 8000],
-      ['heart_rate', 72, 'bpm', null],
-      ['sleep', 462, 'minutes', 480],
-      ['hydration', 1.6, 'L', 2],
-      ['blood_oxygen', 98, '%', null],
-      ['weight', 68.4, 'kg', null],
-    ] as const
-    for (const [metricType, value, unit, goalValue] of baselineMetrics) {
-      database.prepare(`INSERT INTO health_metrics (id, patient_user_id, metric_type, value, unit, goal_value, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        id('metric'),
-        userId,
-        metricType,
-        value,
-        unit,
-        goalValue,
-        createdAt,
+    if (process.env.NODE_ENV !== 'production') {
+      database.prepare(`INSERT INTO appointments (id, patient_id, clinician_name, department, appointment_at, room, status) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        id('apt'),
+        patientId,
+        'Dr. Elena Ruiz',
+        'General Medicine',
+        '2026-09-18T10:30:00.000Z',
+        'Room 301',
+        'Requested',
       )
+      const baselineMetrics = [
+        ['steps', 6842, 'steps', 8000],
+        ['heart_rate', 72, 'bpm', null],
+        ['sleep', 462, 'minutes', 480],
+        ['hydration', 1.6, 'L', 2],
+        ['blood_oxygen', 98, '%', null],
+        ['weight', 68.4, 'kg', null],
+      ] as const
+      for (const [metricType, value, unit, goalValue] of baselineMetrics) {
+        database.prepare(`INSERT INTO health_metrics (id, patient_user_id, metric_type, value, unit, goal_value, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          id('metric'),
+          userId,
+          metricType,
+          value,
+          unit,
+          goalValue,
+          createdAt,
+        )
+      }
     }
   }
   return getUserById(userId) as User
@@ -354,7 +368,8 @@ function provisionUserFromEnvironment(prefix: 'ADMIN' | 'DOCTOR' | 'STAFF') {
   createUser({ email, name, password, role: prefix === 'ADMIN' ? 'Admin' : prefix === 'DOCTOR' ? 'Doctor' : 'Staff' })
 }
 
-seedCoreData()
+if (process.env.NODE_ENV !== 'production') seedCoreData()
 provisionUserFromEnvironment('ADMIN')
 provisionUserFromEnvironment('DOCTOR')
 provisionUserFromEnvironment('STAFF')
+
