@@ -2,6 +2,12 @@
 
 MediNexus is a premium, role-aware hospital management platform concept built around one connected care workspace. The current first slice establishes the visual system and the primary operations workflow in a responsive React + Vite app.
 
+## Live Demo
+
+**GitHub Pages:** https://deepnayan832.github.io/MediNexus/
+
+The live deployment is the frontend demo. The Node/SQLite API remains a local/backend service, so authentication and API-backed features require the backend to be running locally until a production backend is deployed.
+
 ## Current slice
 
 - Role-aware Admin, Doctor, Staff, and Patient workspaces
