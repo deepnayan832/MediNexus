@@ -47,7 +47,7 @@ const allowedOrigins = new Set([...(publicOrigin ? [publicOrigin] : []), ...conf
 const staticRoot = resolve(process.env.MEDINEXUS_STATIC_DIR ?? 'dist')
 const staticIndexPath = resolve(staticRoot, 'index.html')
 const hasBuiltFrontend = existsSync(staticIndexPath)
-const emailPattern = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const metricTypes = new Set(['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'])
 
 function isAllowedOrigin(origin: string | undefined): boolean {
@@ -78,7 +78,7 @@ async function serveFrontend(request: IncomingMessage, response: ServerResponse,
   let decodedPath: string
   try { decodedPath = decodeURIComponent(pathname) }
   catch { sendError(response, 400, 'Invalid URL path.', 'BAD_REQUEST'); return true }
-  const relativePath = decodedPath === '/' ? 'index.html' : decodedPath.replace(/^\\/+/, '')
+  const relativePath = decodedPath === '/' ? 'index.html' : decodedPath.replace(/^\/+/, '')
   const candidate = resolve(staticRoot, relativePath)
   if (candidate !== staticRoot && !candidate.startsWith(staticRoot + sep)) {
     sendError(response, 404, 'The requested resource was not found.', 'NOT_FOUND'); return true
@@ -98,16 +98,27 @@ async function serveFrontend(request: IncomingMessage, response: ServerResponse,
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse) {
+  setSecurityHeaders(response)
   Object.entries(corsHeaders(request)).forEach(([key, value]) => response.setHeader(key, value))
+
+  const url = new URL(request.url ?? '/', 'http://' + (request.headers.host ?? 'localhost'))
+  const path = url.pathname
+  if (path.startsWith('/api/')) response.setHeader('Cache-Control', 'no-store')
+
   if (request.method === 'OPTIONS') {
+    if (!isAllowedOrigin(request.headers.origin)) {
+      sendError(response, 403, 'This origin is not allowed.', 'ORIGIN_REJECTED')
+      return
+    }
     response.writeHead(204)
     response.end()
     return
   }
 
-  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
-  const path = url.pathname
-
+  if (path.startsWith('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method ?? '') && !isAllowedOrigin(request.headers.origin)) {
+    sendError(response, 403, 'Cross-origin or origin-less API writes are not allowed.', 'ORIGIN_REJECTED')
+    return
+  }
   if (request.method === 'GET' && path === '/api/health') {
     sendJson(response, 200, { service: 'medinexus-api', status: 'ok', database: 'sqlite', timestamp: new Date().toISOString() })
     return
@@ -270,6 +281,11 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return
   }
 
+  if (path.startsWith('/api/')) {
+    sendError(response, 404, 'The requested resource was not found.', 'NOT_FOUND')
+    return
+  }
+  if (await serveFrontend(request, response, path)) return
   sendError(response, 404, 'The requested resource was not found.', 'NOT_FOUND')
 }
 
@@ -277,6 +293,6 @@ const server = createServer((request, response) => {
   handle(request, response).catch(() => sendError(response, 500, 'An unexpected server error occurred.', 'INTERNAL_ERROR'))
 })
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`MediNexus API listening on http://127.0.0.1:${port}`)
+server.listen(port, host, () => {
+  console.log('MediNexus server listening on http://' + host + ':' + port)
 })
