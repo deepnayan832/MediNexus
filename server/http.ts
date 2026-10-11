@@ -32,13 +32,15 @@ export function parseCookies(request: IncomingMessage) {
   }))
 }
 
-export function setSessionCookie(token: string) {
+export function setSessionCookie(token: string, secure = process.env.NODE_ENV === 'production') {
   const maxAge = 60 * 60 * 8
-  return `medinexus_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`
+  const secureAttribute = secure ? '; Secure' : ''
+  return `medinexus_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secureAttribute}`
 }
 
-export function clearSessionCookie() {
-  return 'medinexus_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
+export function clearSessionCookie(secure = process.env.NODE_ENV === 'production') {
+  const secureAttribute = secure ? '; Secure' : ''
+  return `medinexus_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureAttribute}`
 }
 
 export function asString(value: unknown, maxLength = 200) {
