@@ -6,7 +6,7 @@ MediNexus is a premium, role-aware hospital management platform concept built ar
 
 **GitHub Pages:** https://deepnayan832.github.io/MediNexus/
 
-The live deployment is the frontend demo. The Node/SQLite API remains a local/backend service, so authentication and API-backed features require the backend to be running locally until a production backend is deployed.
+The GitHub Pages site is a static frontend preview. The Node.js + SQLite API is a separate backend today. The Docker deployment described below serves the built frontend and API from one origin, keeping session cookies same-site; the existing GitHub Pages preview does not use that hosted backend.
 
 ## Current slice
 
@@ -21,6 +21,38 @@ The live deployment is the frontend demo. The Node/SQLite API remains a local/ba
 - Node/SQLite API foundation with schema bootstrapping, registration/login/logout sessions, server-side role checks, audit logging, patient/appointment queries, notifications, and health-metric writes
 - Live API connection indicator with a graceful demo-data fallback when the API is not running
 - Authenticated Patient flow in the UI, session restoration, sign-out, RBAC-aware workspace switching, and API-backed health tracker values
+
+## Self-hosted deployment
+
+The repository includes a Dockerfile and Docker Compose setup for hosting the **frontend and API on one origin**. Caddy handles HTTPS automatically after your domain's DNS points to the server. SQLite data is stored in a named Docker volume so app image rebuilds do not replace the database.
+
+**Before starting:** point an A/AAAA record for your domain at the server, allow inbound TCP ports 80 and 443 (and optionally UDP 443), and install Docker Engine with the Compose plugin.
+
+1. Copy `.env.example` to `.env`.
+2. Set `DOMAIN` to the real DNS name and `MEDINEXUS_PUBLIC_ORIGIN` to the matching `https://...` origin. Change the example values before running Compose.
+3. Set a strong password for the provisioned `MEDINEXUS_ADMIN_PASSWORD` and its email/name fields if you want an initial administrator. Keep all passwords in `.env`; never commit that file or use real patient credentials for a demo.
+4. Start the app:
+
+```sh
+docker compose up -d --build
+docker compose ps
+docker compose logs -f app
+```
+
+Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; only Caddy exposes ports 80 and 443. Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin.
+
+Useful maintenance commands:
+
+```sh
+docker compose logs --tail=200 app
+docker compose pull caddy
+docker compose up -d --build
+docker compose down
+```
+
+The named `medinexus_data` volume persists the SQLite file across container recreation. Back it up regularly and test restoring a backup before updating the app. Do not run `docker compose down -v` unless you intentionally want to delete persistent volumes.
+
+**Data and security boundary:** this is a portfolio/demo project, not a validated hospital information system. The current authorization and workflows are not sufficient for real patient records, clinical decisions, or regulated healthcare use. Use synthetic data only until the app has undergone a comprehensive security, privacy, operational, and clinical-safety review.
 
 ## Run locally
 

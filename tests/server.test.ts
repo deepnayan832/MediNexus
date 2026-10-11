@@ -23,7 +23,11 @@ async function waitForApi(url: string) {
 }
 
 async function request(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${baseUrl}${path}`, init)
+  const headers = new Headers(init.headers)
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes((init.method ?? 'GET').toUpperCase()) && !headers.has('Origin')) {
+    headers.set('Origin', 'http://127.0.0.1:5173')
+  }
+  const response = await fetch(`${baseUrl}${path}`, { ...init, headers })
   const body = await response.json().catch(() => ({})) as Record<string, unknown>
   return { response, body }
 }
@@ -35,7 +39,7 @@ before(async () => {
   const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs')
   server = spawn(process.execPath, [tsxCli, 'server/index.ts'], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: String(port), MEDINEXUS_DB_PATH: join(databaseDirectory, 'test.sqlite') },
+    env: { ...process.env, NODE_ENV: 'test', PORT: String(port), MEDINEXUS_HOST: '127.0.0.1', MEDINEXUS_CORS_ORIGIN: 'http://127.0.0.1:5173', MEDINEXUS_DB_PATH: join(databaseDirectory, 'test.sqlite') },
     stdio: 'ignore',
   })
   await waitForApi(baseUrl)
@@ -86,6 +90,16 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
   const emptySession = await request('/api/auth/session', { headers: { Cookie: cookie } })
   assert.equal(emptySession.response.status, 200)
   assert.equal(emptySession.body.user, null)
+})
+
+test('rejects cross-origin writes', async () => {
+  const response = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { Origin: 'https://attacker.example', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Blocked User', email: 'blocked@example.test', password: 'SufficientlyLong!42' }),
+  })
+  assert.equal(response.response.status, 403)
+  assert.equal((response.body.error as Record<string, unknown>).code, 'ORIGIN_REJECTED')
 })
 
 test('rejects unsafe registration and malformed health metrics', async () => {

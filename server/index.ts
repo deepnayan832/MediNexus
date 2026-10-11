@@ -1,5 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { URL } from 'node:url'
+import { existsSync } from 'node:fs'
+import { readFile, stat } from 'node:fs/promises'
+import { extname, resolve, sep } from 'node:path'
 import {
   audit,
   createAppointmentForPatient,
@@ -20,32 +23,102 @@ import { clearSession, currentUser, requireRole, requireUser, sessionForUser } f
 import { asNumber, asString, readJson, sendError, sendJson } from './http'
 
 const port = Number(process.env.PORT ?? 8787)
-const allowedOrigin = process.env.MEDINEXUS_CORS_ORIGIN ?? 'http://127.0.0.1:5173'
+const host = process.env.MEDINEXUS_HOST ?? (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1')
+const isProduction = process.env.NODE_ENV === 'production'
+const publicOriginInput = (process.env.MEDINEXUS_PUBLIC_ORIGIN ?? '').trim()
+let publicOrigin: string | undefined
+
+if (publicOriginInput) {
+  let parsed: URL
+  try { parsed = new URL(publicOriginInput) }
+  catch { throw new Error('MEDINEXUS_PUBLIC_ORIGIN must be a valid absolute origin.') }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('MEDINEXUS_PUBLIC_ORIGIN must be an HTTPS origin with no path, query, or fragment.')
+  }
+  publicOrigin = parsed.origin
+}
+if (isProduction && !publicOrigin) {
+  throw new Error('Production requires MEDINEXUS_PUBLIC_ORIGIN, e.g. https://medinexus.example.com.')
+}
+
+const configuredCorsOrigins = (process.env.MEDINEXUS_CORS_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean)
+const developmentOrigins = !isProduction ? (process.env.MEDINEXUS_CORS_ORIGIN ?? 'http://127.0.0.1:5173').split(',').map((value) => value.trim()).filter(Boolean) : []
+const allowedOrigins = new Set([...(publicOrigin ? [publicOrigin] : []), ...configuredCorsOrigins, ...developmentOrigins])
+const staticRoot = resolve(process.env.MEDINEXUS_STATIC_DIR ?? 'dist')
+const staticIndexPath = resolve(staticRoot, 'index.html')
+const hasBuiltFrontend = existsSync(staticIndexPath)
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const metricTypes = new Set(['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'])
 
-function corsHeaders(request: IncomingMessage) {
+function isAllowedOrigin(origin: string | undefined): boolean {
+  return Boolean(origin && allowedOrigins.has(origin))
+}
+
+function corsHeaders(request: IncomingMessage): Record<string, string> {
   const origin = request.headers.origin
-  return {
-    'Access-Control-Allow-Origin': origin === allowedOrigin ? origin : allowedOrigin,
-    'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    Vary: 'Origin',
+  const headers: Record<string, string> = { Vary: 'Origin' }
+  if (!isAllowedOrigin(origin)) return headers
+  headers['Access-Control-Allow-Origin'] = origin!
+  headers['Access-Control-Allow-Credentials'] = 'true'
+  headers['Access-Control-Allow-Headers'] = 'Content-Type'
+  headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+  return headers
+}
+
+function setSecurityHeaders(response: ServerResponse) {
+  response.setHeader('X-Content-Type-Options', 'nosniff')
+  response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.setHeader('X-Frame-Options', 'DENY')
+  response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  if (isProduction) response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+}
+
+async function serveFrontend(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
+  if (!hasBuiltFrontend || (request.method !== 'GET' && request.method !== 'HEAD')) return false
+  let decodedPath: string
+  try { decodedPath = decodeURIComponent(pathname) }
+  catch { sendError(response, 400, 'Invalid URL path.', 'BAD_REQUEST'); return true }
+  const relativePath = decodedPath === '/' ? 'index.html' : decodedPath.replace(/^\/+/, '')
+  const candidate = resolve(staticRoot, relativePath)
+  if (candidate !== staticRoot && !candidate.startsWith(staticRoot + sep)) {
+    sendError(response, 404, 'The requested resource was not found.', 'NOT_FOUND'); return true
   }
+  let filePath = candidate
+  try { const info = await stat(filePath); if (!info.isFile()) throw new Error('not_a_file') }
+  catch {
+    if (extname(decodedPath)) { sendError(response, 404, 'The requested resource was not found.', 'NOT_FOUND'); return true }
+    filePath = staticIndexPath
+  }
+  const extension = extname(filePath).toLowerCase()
+  const contentType: Record<string, string> = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.svg':'image/svg+xml', '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.ico':'image/x-icon', '.woff':'font/woff', '.woff2':'font/woff2', '.json':'application/json; charset=utf-8' }
+  response.writeHead(200, { 'Content-Type': contentType[extension] ?? 'application/octet-stream', 'Cache-Control': filePath === staticIndexPath ? 'no-cache' : 'public, max-age=86400' })
+  if (request.method === 'HEAD') { response.end(); return true }
+  response.end(await readFile(filePath))
+  return true
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse) {
+  setSecurityHeaders(response)
   Object.entries(corsHeaders(request)).forEach(([key, value]) => response.setHeader(key, value))
+
+  const url = new URL(request.url ?? '/', 'http://' + (request.headers.host ?? 'localhost'))
+  const path = url.pathname
+  if (path.startsWith('/api/')) response.setHeader('Cache-Control', 'no-store')
+
   if (request.method === 'OPTIONS') {
+    if (!isAllowedOrigin(request.headers.origin)) {
+      sendError(response, 403, 'This origin is not allowed.', 'ORIGIN_REJECTED')
+      return
+    }
     response.writeHead(204)
     response.end()
     return
   }
 
-  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
-  const path = url.pathname
-
+  if (path.startsWith('/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method ?? '') && !isAllowedOrigin(request.headers.origin)) {
+    sendError(response, 403, 'Cross-origin or origin-less API writes are not allowed.', 'ORIGIN_REJECTED')
+    return
+  }
   if (request.method === 'GET' && path === '/api/health') {
     sendJson(response, 200, { service: 'medinexus-api', status: 'ok', database: 'sqlite', timestamp: new Date().toISOString() })
     return
@@ -208,6 +281,11 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return
   }
 
+  if (path.startsWith('/api/')) {
+    sendError(response, 404, 'The requested resource was not found.', 'NOT_FOUND')
+    return
+  }
+  if (await serveFrontend(request, response, path)) return
   sendError(response, 404, 'The requested resource was not found.', 'NOT_FOUND')
 }
 
@@ -215,6 +293,6 @@ const server = createServer((request, response) => {
   handle(request, response).catch(() => sendError(response, 500, 'An unexpected server error occurred.', 'INTERNAL_ERROR'))
 })
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`MediNexus API listening on http://127.0.0.1:${port}`)
+server.listen(port, host, () => {
+  console.log('MediNexus server listening on http://' + host + ':' + port)
 })
