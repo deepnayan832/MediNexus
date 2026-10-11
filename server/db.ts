@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { randomBytes, scryptSync } from 'node:crypto'
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 
 export type Role = 'Admin' | 'Doctor' | 'Staff' | 'Patient'
@@ -102,7 +102,9 @@ export function hashPassword(password: string, salt = randomBytes(16).toString('
 }
 
 export function verifyPassword(password: string, storedHash: string, salt: string) {
-  return scryptSync(password, salt, 64).toString('hex') === storedHash
+  const actual = scryptSync(password, salt, 64)
+  const expected = Buffer.from(storedHash, 'hex')
+  return expected.length === actual.length && timingSafeEqual(actual, expected)
 }
 
 function mapUser(row: Row): User {
