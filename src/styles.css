@@ -175,3 +175,139 @@ html, body, .app-shell, .topbar, .panel, .kpi-card, .module-row, .button-soft, .
 @media (max-width: 1100px) { .health-metric-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 780px) { .preferences-panel { top: 62px; right: 15px; left: 15px; width: auto; }.health-metric-grid { grid-template-columns: repeat(2, 1fr); }.health-visuals { grid-template-columns: 1fr; }.tracker-heading-actions { align-items: flex-end; flex-direction: column; gap: 8px; }.details-drawer { width: min(430px, 94vw); padding: 21px; } }
 @media (max-width: 560px) { .health-metric-grid { gap: 7px; padding: 12px; }.health-metric { min-height: 132px; padding: 10px; }.health-metric-copy strong { font-size: 15px; }.health-metric-copy small { font-size: 7px; }.health-visuals { padding: 0 12px; }.health-chart-block, .health-insight-block { padding: 12px; }.details-drawer { width: 100%; }.drawer-facts { grid-template-columns: 1fr 1fr; } }
+
+
+/* 2026 design refinement — Clinical Minimalism */
+:root {
+  color-scheme: light;
+  color: #183e38;
+  background: #f5faf7;
+  --navy: #103b38;
+  --navy-2: #15524d;
+  --ink: #183e38;
+  --muted: #688079;
+  --muted-2: #9aaca6;
+  --line: #dcebe5;
+  --surface: #ffffff;
+  --page: #f5faf7;
+  --cyan: #16877e;
+  --violet: #718d88;
+  --mint: #26a98c;
+  --coral: #d97763;
+  --shadow: 0 12px 30px rgba(18, 64, 54, .07);
+  --radius: 16px;
+}
+body, .app-shell { background: var(--page); color: var(--ink); }
+.sidebar {
+  background: linear-gradient(168deg, #103b38 0%, #144a45 62%, #0e3532 100%);
+  box-shadow: 12px 0 32px rgba(16, 59, 56, .07);
+}
+.brand-mark span { background: #37b9a3; }
+.brand-mark span:nth-child(3), .brand-mark span:nth-child(4) { background: #b0eee0; }
+.sidebar-workspace { border-color: rgba(189, 235, 221, .17); background: rgba(255, 255, 255, .045); }
+.workspace-icon { color: #a8eee0; background: rgba(55, 185, 163, .16); }
+.nav-section-label { color: #8aafa7; }
+.nav-item { color: #c4ded8; }
+.nav-item:hover { color: #ffffff; background: rgba(255,255,255,.075); }
+.nav-item.active {
+  color: #f1fffb;
+  background: linear-gradient(90deg, rgba(26, 148, 132, .25), rgba(22, 91, 82, .5));
+  box-shadow: inset 3px 0 #48c8b2;
+}
+.nav-item.active::after { background: #bcfff0; box-shadow: 0 0 9px rgba(126, 239, 219, .6); }
+.sidebar-bottom { border-color: rgba(189, 235, 221, .15); }
+.connection-card { background: linear-gradient(140deg, rgba(31, 126, 112, .28), rgba(13, 57, 53, .2)); }
+.connection-line { background: #48c8b2; }
+.connection-buildings i { border-color: rgba(72, 200, 178, .7); background: linear-gradient(150deg, rgba(39, 143, 125, .44), rgba(9, 46, 43, .85)); }
+.topbar { border-color: var(--line); background: rgba(255,255,255,.94); }
+.workspace-select { border-color: #d9e9e2; background: #f5faf7; }
+.workspace-select:hover { border-color: #b7d8cc; background: #eff8f3; }
+.workspace-select-icon { color: #1b7d70; background: #e4f4ed; }
+.global-search { border-color: #d9e9e2; background: #f7fbf8; }
+.global-search:focus-within { border-color: #83cdbd; box-shadow: 0 0 0 3px rgba(22, 135, 126, .11); }
+.global-search kbd { border-color: #dbe9e3; color: #879d95; }
+.topbar-divider { background: var(--line); }
+.button-primary { background: linear-gradient(135deg, #16877e, #0d7168); box-shadow: 0 7px 16px rgba(22,135,126,.16); }
+.button-primary:hover { background: linear-gradient(135deg, #12786f, #0a625b); }
+.button-soft { border-color: #dcebe5; color: #496b62; background: #ffffff; }
+.button-soft:hover { border-color: #bedbd0; background: #f3faf6; }
+.text-button { color: #16877e; }
+.text-button:hover { color: #0d7168; }
+.page-heading h1, .panel-heading h2 { letter-spacing: -.055em; }
+.eyebrow { color: #66857c; }
+.kpi-card, .panel { border-color: #dcebe5; box-shadow: 0 8px 24px rgba(18,64,54,.045); }
+.kpi-icon-cyan { color: #147f76; background: #e3f5ef; }
+.kpi-icon-mint { color: #168e70; background: #e3f5ec; }
+.kpi-icon-violet { color: #5b7d76; background: #edf4f1; }
+.kpi-icon-coral { color: #c96b59; background: #fff0ea; }
+.role-menu, .notification-panel, .preferences-panel, .modal, .details-drawer {
+  border-color: #dcebe5;
+  box-shadow: 0 20px 50px rgba(18,64,54,.14);
+}
+.role-menu-action { color: #16877e; }
+.role-menu-action:hover { color: #0d7168; background: #eff8f3; }
+.global-search input, .workspace-select, .profile-trigger { color: var(--ink); }
+
+/* Preserve a cohesive evergreen version when the existing theme switch is used. */
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --ink: #e4f2ed;
+  --muted: #a2bcb3;
+  --muted-2: #7e9b91;
+  --line: #29443e;
+  --surface: #122522;
+  --page: #0c1917;
+  --navy: #0b211f;
+  --navy-2: #13332f;
+  --cyan: #55cdb8;
+  --violet: #93b6aa;
+  --mint: #58d2ae;
+  --shadow: 0 12px 32px rgba(0,0,0,.18);
+}
+html[data-theme='dark'] body,
+html[data-theme='dark'] .app-shell { color: var(--ink); background: var(--page); }
+html[data-theme='dark'] .sidebar { background: linear-gradient(168deg, #0b2421 0%, #10332e 64%, #0a1d1b 100%); }
+html[data-theme='dark'] .topbar { border-color: #29443e; background: rgba(12,25,23,.93); }
+html[data-theme='dark'] .workspace-select,
+html[data-theme='dark'] .global-search,
+html[data-theme='dark'] .global-search kbd { border-color: #31564e; color: #e4f2ed; background: #142a26; }
+html[data-theme='dark'] .workspace-select-icon { color: #8ee2d1; background: #1d423a; }
+html[data-theme='dark'] .global-search:focus-within { border-color: #4aa996; background: #142a26; }
+html[data-theme='dark'] .panel,
+html[data-theme='dark'] .kpi-card { border-color: #29443e; background: #122522; }
+html[data-theme='dark'] .module-row,
+html[data-theme='dark'] .schedule-row { border-color: #29443e; background: #122522; }
+html[data-theme='dark'] .module-row:hover,
+html[data-theme='dark'] .schedule-row:hover,
+html[data-theme='dark'] .schedule-row.selected { background: #19352f; }
+html[data-theme='dark'] .button-soft,
+html[data-theme='dark'] .appointment-form input,
+html[data-theme='dark'] .appointment-form select,
+html[data-theme='dark'] .visit-date,
+html[data-theme='dark'] .range-picker { border-color: #31564e; color: #e4f2ed; background: #19352f; }
+html[data-theme='dark'] .button-soft:hover { background: #21483f; }
+html[data-theme='dark'] .role-menu,
+html[data-theme='dark'] .notification-panel,
+html[data-theme='dark'] .preferences-panel,
+html[data-theme='dark'] .modal,
+html[data-theme='dark'] .details-drawer { border-color: #31564e; color: #e4f2ed; background: #122522; }
+html[data-theme='dark'] .role-menu button:hover,
+html[data-theme='dark'] .role-menu button.selected { background: #19352f; }
+html[data-theme='dark'] .role-menu-action { border-color: #29443e; color: #79d9c6; }
+html[data-theme='dark'] .role-menu-action:hover { background: #19352f; }
+html[data-theme='dark'] .notification-item,
+html[data-theme='dark'] .plan-step,
+html[data-theme='dark'] .module-table-header { border-color: #29443e; }
+html[data-theme='dark'] .notification-item p,
+html[data-theme='dark'] .notification-item small,
+html[data-theme='dark'] .drawer-meta,
+html[data-theme='dark'] .drawer-facts span,
+html[data-theme='dark'] .drawer-timeline small { color: #a2bcb3; }
+html[data-theme='dark'] .patient-hero { background: linear-gradient(120deg, #173a33, #122522); }
+html[data-theme='dark'] .health-chart-block,
+html[data-theme='dark'] .health-insight-block,
+html[data-theme='dark'] .health-metric { border-color: #31564e; background: #16302b; }
+html[data-theme='dark'] .health-metric:hover { background: #1b4037; }
+html[data-theme='dark'] .drawer-facts > div,
+html[data-theme='dark'] .drawer-timeline > div { border-color: #31564e; }
+html[data-theme='dark'] .critical-callout { background: #38222a; }
