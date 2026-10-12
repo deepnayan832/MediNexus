@@ -17,6 +17,17 @@ export type RemoteHealthMetric = {
   recordedAt: string
 }
 
+export type RemoteAppointment = {
+  id: string
+  patientId: string
+  patientName: string
+  clinicianName: string
+  department: string
+  appointmentAt: string
+  room: string
+  status: string
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 export async function checkApiHealth(signal?: AbortSignal) {
@@ -62,6 +73,17 @@ export function logout() {
 
 export function getHealthMetrics() {
   return request<{ metrics: RemoteHealthMetric[] }>('/api/health-metrics').then((result) => result.metrics)
+}
+
+export function getAppointments() {
+  return request<{ appointments: RemoteAppointment[] }>('/api/appointments').then((result) => result.appointments)
+}
+
+export function createAppointment(department: string, appointmentAt: string) {
+  return request<{ appointment: RemoteAppointment }>('/api/appointments', {
+    method: 'POST',
+    body: JSON.stringify({ department, appointmentAt }),
+  }).then((result) => result.appointment)
 }
 
 export function apiUrl(path: string) {

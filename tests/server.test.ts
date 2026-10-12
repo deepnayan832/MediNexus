@@ -81,6 +81,29 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
   const appointmentsBeforeBooking = await request('/api/appointments', { headers: { Cookie: cookie } })
   assert.equal(appointmentsBeforeBooking.response.status, 200)
   assert.deepEqual(appointmentsBeforeBooking.body.appointments, [])
+  const appointmentAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+  const appointment = await request('/api/appointments', {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ department: 'Cardiology', appointmentAt }),
+  })
+  assert.equal(appointment.response.status, 201)
+  assert.equal((appointment.body.appointment as Record<string, unknown>).status, 'Requested')
+  const appointmentsAfterBooking = await request('/api/appointments', { headers: { Cookie: cookie } })
+  assert.equal(appointmentsAfterBooking.response.status, 200)
+  assert.equal((appointmentsAfterBooking.body.appointments as unknown[]).length, 1)
+  const pastAppointment = await request('/api/appointments', {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ department: 'Cardiology', appointmentAt: '2020-01-01T10:00:00.000Z' }),
+  })
+  assert.equal(pastAppointment.response.status, 422)
+  const unsupportedDepartment = await request('/api/appointments', {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ department: 'Unlisted department', appointmentAt }),
+  })
+  assert.equal(unsupportedDepartment.response.status, 422)
   const created = await request('/api/health-metrics', {
     method: 'POST',
     headers: { Cookie: cookie, 'Content-Type': 'application/json' },

@@ -50,6 +50,7 @@ const staticIndexPath = resolve(staticRoot, 'index.html')
 const hasBuiltFrontend = existsSync(staticIndexPath)
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const metricTypes = new Set(['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'])
+const appointmentDepartments = new Set(['Cardiology', 'Internal Medicine', 'Orthopedics', 'Pediatrics'])
 const trustProxy = process.env.MEDINEXUS_TRUST_PROXY === 'true'
 const loginLimiter = new SlidingWindowLimiter()
 const registrationLimiter = new SlidingWindowLimiter()
@@ -252,11 +253,12 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       const body = await readJson(request)
       const department = asString(body.department, 80)
       const appointmentAt = asString(body.appointmentAt, 40)
-      if (department.length < 2 || Number.isNaN(Date.parse(appointmentAt))) {
-        sendError(response, 422, 'A department and valid appointment time are required.', 'VALIDATION_ERROR')
+      const appointmentTimestamp = Date.parse(appointmentAt)
+      if (!appointmentDepartments.has(department) || !Number.isFinite(appointmentTimestamp) || appointmentTimestamp <= Date.now()) {
+        sendError(response, 422, 'Choose a supported department and a future appointment time.', 'VALIDATION_ERROR')
         return
       }
-      const appointment = createAppointmentForPatient({ userId: user.id, department, appointmentAt: new Date(appointmentAt).toISOString() })
+      const appointment = createAppointmentForPatient({ userId: user.id, department, appointmentAt: new Date(appointmentTimestamp).toISOString() })
       if (!appointment) {
         sendError(response, 409, 'A patient profile is required before booking care.', 'PATIENT_PROFILE_REQUIRED')
         return
