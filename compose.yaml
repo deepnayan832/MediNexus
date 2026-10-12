@@ -11,6 +11,10 @@ services:
       MEDINEXUS_PUBLIC_ORIGIN: ${MEDINEXUS_PUBLIC_ORIGIN:?Set MEDINEXUS_PUBLIC_ORIGIN in .env}
       MEDINEXUS_DB_PATH: /app/data/medinexus.sqlite
       MEDINEXUS_STATIC_DIR: /app/dist
+      MEDINEXUS_TRUST_PROXY: "true"
+      MEDINEXUS_AUTH_ATTEMPTS_PER_MINUTE: "10"
+      MEDINEXUS_REGISTRATIONS_PER_HOUR: "5"
+      MEDINEXUS_DEMO_DATA: "false"
     volumes:
       - medinexus_data:/app/data
     expose:
