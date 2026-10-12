@@ -52,6 +52,8 @@ docker compose down
 
 The named `medinexus_data` volume persists the SQLite file across container recreation. Back it up regularly and test restoring a backup before updating the app. Do not run `docker compose down -v` unless you intentionally want to delete persistent volumes.
 
+**Authentication guardrails:** the API rate-limits login attempts (10 per client per minute by default) and registrations (5 per client per hour by default). The Compose deployment sets `MEDINEXUS_TRUST_PROXY=true` only behind Caddy, which overwrites `X-Forwarded-For` with the connecting client address. Do not enable trusted-proxy mode unless your own reverse proxy does the same. These in-memory limits are for a single instance and do not replace account lockout policy, monitoring, MFA, or a managed identity service.
+
 **Data and security boundary:** this is a portfolio/demo project, not a validated hospital information system. The current authorization and workflows are not sufficient for real patient records, clinical decisions, or regulated healthcare use. Use synthetic data only until the app has undergone a comprehensive security, privacy, operational, and clinical-safety review.
 
 ## Run locally
@@ -67,7 +69,7 @@ In a second terminal, start the API:
 npm run server:start
 ```
 
-The API listens on `http://127.0.0.1:8787` by default and creates its local SQLite file at `data/medinexus.sqlite`. Copy `.env.example` to `.env` to configure the port, database path, CORS origin, or provisioned staff accounts. Never commit `.env` or production credentials.
+The API listens on `http://127.0.0.1:8787` by default and creates its local SQLite file at `data/medinexus.sqlite`. Copy `.env.example` to `.env` to configure the port, database path, CORS origin, or provisioned staff accounts. The `server:dev` and `server:start` scripts load `.env` before initializing the API and database. Never commit `.env` or production credentials. Production requires `MEDINEXUS_DB_PATH` to be an absolute path on persistent storage and never seeds synthetic patient records, sample appointments, or baseline health metrics.
 
 Production build:
 

@@ -39,7 +39,7 @@ before(async () => {
   const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs')
   server = spawn(process.execPath, [tsxCli, 'server/index.ts'], {
     cwd: process.cwd(),
-    env: { ...process.env, NODE_ENV: 'test', PORT: String(port), MEDINEXUS_HOST: '127.0.0.1', MEDINEXUS_CORS_ORIGIN: 'http://127.0.0.1:5173', MEDINEXUS_DB_PATH: join(databaseDirectory, 'test.sqlite') },
+    env: { ...process.env, NODE_ENV: 'test', PORT: String(port), MEDINEXUS_HOST: '127.0.0.1', MEDINEXUS_CORS_ORIGIN: 'http://127.0.0.1:5173', MEDINEXUS_DB_PATH: join(databaseDirectory, 'test.sqlite'), MEDINEXUS_TRUST_PROXY: 'true', MEDINEXUS_AUTH_ATTEMPTS_PER_MINUTE: '10', MEDINEXUS_DEMO_DATA: 'false' },
     stdio: 'ignore',
   })
   await waitForApi(baseUrl)
@@ -76,6 +76,10 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
 
   const metrics = await request('/api/health-metrics', { headers: { Cookie: cookie } })
   assert.equal(metrics.response.status, 200)
+  assert.deepEqual(metrics.body.metrics, [])
+  const appointmentsBeforeBooking = await request('/api/appointments', { headers: { Cookie: cookie } })
+  assert.equal(appointmentsBeforeBooking.response.status, 200)
+  assert.deepEqual(appointmentsBeforeBooking.body.appointments, [])
   const created = await request('/api/health-metrics', {
     method: 'POST',
     headers: { Cookie: cookie, 'Content-Type': 'application/json' },
@@ -109,4 +113,24 @@ test('rejects unsafe registration and malformed health metrics', async () => {
     body: JSON.stringify({ name: 'A', email: 'bad', password: 'short' }),
   })
   assert.equal(weak.response.status, 422)
+})
+
+
+test('rate limits repeated login attempts by trusted client address', async () => {
+  const headers = {
+    Origin: 'http://127.0.0.1:5173',
+    'Content-Type': 'application/json',
+    'X-Forwarded-For': '203.0.113.88',
+  }
+  const body = JSON.stringify({ email: 'absent@example.test', password: 'not-the-password' })
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const result = await request('/api/auth/login', { method: 'POST', headers, body })
+    assert.equal(result.response.status, 401)
+  }
+
+  const limited = await request('/api/auth/login', { method: 'POST', headers, body })
+  assert.equal(limited.response.status, 429)
+  assert.equal(limited.response.headers.get('retry-after'), '60')
+  assert.equal((limited.body.error as Record<string, unknown>).code, 'RATE_LIMITED')
 })

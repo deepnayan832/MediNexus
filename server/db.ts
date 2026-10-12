@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -20,7 +20,12 @@ type StoredUser = User & {
 
 type Row = Record<string, unknown>
 
-const databasePath = resolve(process.env.MEDINEXUS_DB_PATH ?? 'data/medinexus.sqlite')
+const configuredDatabasePath = process.env.MEDINEXUS_DB_PATH?.trim()
+if (process.env.NODE_ENV === 'production' && (!configuredDatabasePath || !isAbsolute(configuredDatabasePath))) {
+  throw new Error('Production requires MEDINEXUS_DB_PATH to be an absolute path on persistent storage.')
+}
+const databasePath = resolve(configuredDatabasePath || 'data/medinexus.sqlite')
+const demoDataEnabled = process.env.NODE_ENV !== 'production' && process.env.MEDINEXUS_DEMO_DATA !== 'false'
 mkdirSync(dirname(databasePath), { recursive: true })
 
 export const database = new DatabaseSync(databasePath)
@@ -167,33 +172,35 @@ export function createUser(input: { email: string; name: string; password: strin
       'info',
       createdAt,
     )
-    database.prepare(`INSERT INTO appointments (id, patient_id, clinician_name, department, appointment_at, room, status) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-      id('apt'),
-      patientId,
-      'Dr. Elena Ruiz',
-      'General Medicine',
-      '2026-09-18T10:30:00.000Z',
-      'Room 301',
-      'Requested',
-    )
-    const baselineMetrics = [
-      ['steps', 6842, 'steps', 8000],
-      ['heart_rate', 72, 'bpm', null],
-      ['sleep', 462, 'minutes', 480],
-      ['hydration', 1.6, 'L', 2],
-      ['blood_oxygen', 98, '%', null],
-      ['weight', 68.4, 'kg', null],
-    ] as const
-    for (const [metricType, value, unit, goalValue] of baselineMetrics) {
-      database.prepare(`INSERT INTO health_metrics (id, patient_user_id, metric_type, value, unit, goal_value, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        id('metric'),
-        userId,
-        metricType,
-        value,
-        unit,
-        goalValue,
-        createdAt,
+    if (demoDataEnabled) {
+      database.prepare(`INSERT INTO appointments (id, patient_id, clinician_name, department, appointment_at, room, status) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        id('apt'),
+        patientId,
+        'Dr. Elena Ruiz',
+        'General Medicine',
+        '2026-09-18T10:30:00.000Z',
+        'Room 301',
+        'Requested',
       )
+      const baselineMetrics = [
+        ['steps', 6842, 'steps', 8000],
+        ['heart_rate', 72, 'bpm', null],
+        ['sleep', 462, 'minutes', 480],
+        ['hydration', 1.6, 'L', 2],
+        ['blood_oxygen', 98, '%', null],
+        ['weight', 68.4, 'kg', null],
+      ] as const
+      for (const [metricType, value, unit, goalValue] of baselineMetrics) {
+        database.prepare(`INSERT INTO health_metrics (id, patient_user_id, metric_type, value, unit, goal_value, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          id('metric'),
+          userId,
+          metricType,
+          value,
+          unit,
+          goalValue,
+          createdAt,
+        )
+      }
     }
   }
   return getUserById(userId) as User
@@ -356,7 +363,7 @@ function provisionUserFromEnvironment(prefix: 'ADMIN' | 'DOCTOR' | 'STAFF') {
   createUser({ email, name, password, role: prefix === 'ADMIN' ? 'Admin' : prefix === 'DOCTOR' ? 'Doctor' : 'Staff' })
 }
 
-seedCoreData()
+if (demoDataEnabled) seedCoreData()
 provisionUserFromEnvironment('ADMIN')
 provisionUserFromEnvironment('DOCTOR')
 provisionUserFromEnvironment('STAFF')
