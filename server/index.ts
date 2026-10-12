@@ -21,6 +21,7 @@ import {
 } from './db'
 import { clearSession, currentUser, requireRole, requireUser, sessionForUser } from './auth'
 import { asNumber, asString, readJson, sendError, sendJson } from './http'
+import { SlidingWindowLimiter } from './rate-limit'
 
 const port = Number(process.env.PORT ?? 8787)
 const host = process.env.MEDINEXUS_HOST ?? (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1')
@@ -49,6 +50,33 @@ const staticIndexPath = resolve(staticRoot, 'index.html')
 const hasBuiltFrontend = existsSync(staticIndexPath)
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const metricTypes = new Set(['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'])
+const trustProxy = process.env.MEDINEXUS_TRUST_PROXY === 'true'
+const loginLimiter = new SlidingWindowLimiter()
+const registrationLimiter = new SlidingWindowLimiter()
+
+function configuredLimit(name: string, fallback: number, maximum: number): number {
+  const raw = process.env[name]
+  if (!raw?.trim()) return fallback
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${name} must be an integer between 1 and ${maximum}.`)
+  }
+  return value
+}
+
+const authAttemptsPerMinute = configuredLimit('MEDINEXUS_AUTH_ATTEMPTS_PER_MINUTE', 10, 1000)
+const registrationsPerHour = configuredLimit('MEDINEXUS_REGISTRATIONS_PER_HOUR', 5, 1000)
+
+function clientAddress(request: IncomingMessage): string {
+  if (trustProxy) {
+    const forwarded = request.headers['x-forwarded-for']
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+      const address = forwarded.split(',')[0]?.trim()
+      if (address) return address
+    }
+  }
+  return request.socket.remoteAddress || 'unknown'
+}
 
 function isAllowedOrigin(origin: string | undefined): boolean {
   return Boolean(origin && allowedOrigins.has(origin))
@@ -125,6 +153,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   if (request.method === 'POST' && path === '/api/auth/register') {
+    if (!registrationLimiter.allow(clientAddress(request), registrationsPerHour, 60 * 60 * 1000)) {
+      sendJson(response, 429, { error: { code: 'RATE_LIMITED', message: 'Too many registration attempts. Try again later.' } }, { 'Retry-After': '3600' })
+      return
+    }
     try {
       const body = await readJson(request)
       const email = normalizeEmail(asString(body.email, 160))
@@ -149,6 +181,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   if (request.method === 'POST' && path === '/api/auth/login') {
+    if (!loginLimiter.allow(clientAddress(request), authAttemptsPerMinute, 60 * 1000)) {
+      sendJson(response, 429, { error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Try again in a minute.' } }, { 'Retry-After': '60' })
+      return
+    }
     try {
       const body = await readJson(request)
       const email = normalizeEmail(asString(body.email, 160))
