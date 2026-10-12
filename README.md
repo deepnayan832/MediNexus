@@ -15,6 +15,7 @@ The GitHub Pages site is a static frontend preview. The Node.js + SQLite API is 
 - Operations dashboard with KPI cards, schedule, patient flow chart, team activity, and emergency status
 - Searchable module views for patients, appointments, beds, emergency, pharmacy, labs, billing, reports, and settings
 - Working appointment and emergency dialogs, role switching, notifications, chart range controls, row selection, detail drawers, toasts, and empty search state
+- Patient appointment requests saved to the API, validated against supported departments and future dates, and shown in the patient's appointment list
 - Patient health tracker with steps, heart rate, sleep, hydration, blood oxygen, weight, trend visualization, daily goals, and metric detail panels
 - Light/dark theme switching with device persistence, sound feedback, supported vibration cues, and a preferences panel
 - Accessible semantic controls, keyboard-visible focus, Escape-to-close dialogs/menus, ⌘/Ctrl+K search focus, and reduced-motion support

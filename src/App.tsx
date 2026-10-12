@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { checkApiHealth, getCurrentUser, getHealthMetrics, login as apiLogin, logout as apiLogout, register as apiRegister, type ApiStatus, type ApiUser, type RemoteHealthMetric } from './api'
+import { checkApiHealth, createAppointment as apiCreateAppointment, getAppointments, getCurrentUser, getHealthMetrics, login as apiLogin, logout as apiLogout, register as apiRegister, type ApiStatus, type ApiUser, type RemoteAppointment, type RemoteHealthMetric } from './api'
 
 type Role = 'Admin' | 'Doctor' | 'Staff' | 'Patient'
 type Theme = 'light' | 'dark'
@@ -331,6 +331,7 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [remoteHealthMetrics, setRemoteHealthMetrics] = useState<RemoteHealthMetric[]>([])
+  const [remoteAppointments, setRemoteAppointments] = useState<RemoteAppointment[]>([])
   const [roleOpen, setRoleOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [preferencesOpen, setPreferencesOpen] = useState(false)
@@ -341,6 +342,7 @@ function App() {
   const [toast, setToast] = useState<string | null>(null)
   const [showAllSchedule, setShowAllSchedule] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const appointmentRequestVersion = useRef(0)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -383,6 +385,21 @@ function App() {
   }, [sessionUser])
 
   useEffect(() => {
+    if (sessionUser?.role !== 'Patient') {
+      setRemoteAppointments([])
+      return
+    }
+    let active = true
+    const requestVersion = ++appointmentRequestVersion.current
+    getAppointments().then((appointments) => {
+      if (active && requestVersion === appointmentRequestVersion.current) setRemoteAppointments(appointments)
+    }).catch(() => {
+      if (active && requestVersion === appointmentRequestVersion.current) setRemoteAppointments([])
+    })
+    return () => { active = false }
+  }, [sessionUser])
+
+  useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setModal(null)
@@ -405,7 +422,14 @@ function App() {
   const kpis = baseKpis[role]
   const workspaceRoles: Role[] = sessionUser ? [sessionUser.role] : (Object.keys(roleProfiles) as Role[])
   const isDashboard = activeNav === navItems[0].label
-  const rows = moduleRows[activeNav] ?? moduleRows.Patients
+  const rows = role === 'Patient' && activeNav === 'Appointments'
+    ? remoteAppointments.map((appointment) => ({
+      label: appointment.department,
+      meta: `${appointment.patientName} · ${new Date(appointment.appointmentAt).toLocaleString()}`,
+      value: appointment.status,
+      tone: appointment.status === 'Confirmed' ? 'mint' as const : 'cyan' as const,
+    }))
+    : moduleRows[activeNav] ?? moduleRows.Patients
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query) return rows
@@ -469,12 +493,20 @@ function App() {
     handleAction(`Signed in as ${user.name}`, 'success')
   }
 
+  const handleCreateAppointment = async (department: string, appointmentAt: string) => {
+    if (sessionUser?.role !== 'Patient') throw new Error('Sign in with a patient account to request an appointment.')
+    const appointment = await apiCreateAppointment(department, appointmentAt)
+    appointmentRequestVersion.current += 1
+    setRemoteAppointments((current) => [...current, appointment].sort((left, right) => left.appointmentAt.localeCompare(right.appointmentAt)))
+  }
+
   const handleSignOut = async () => {
     try {
       await apiLogout()
     } finally {
       setSessionUser(null)
       setRemoteHealthMetrics([])
+      setRemoteAppointments([])
       setRole('Admin')
       setActiveNav('Operations')
       setRoleOpen(false)
@@ -528,7 +560,7 @@ function App() {
             <div className="heading-actions"><button className="button button-primary" onClick={() => setModal('appointment')}><Icon name="calendar" size={18} />{role === 'Patient' ? 'Book appointment' : 'New appointment'}</button><button className="button button-danger" onClick={() => setModal('emergency')}><Icon name="alert" size={18} />Emergency access</button></div>
           </div>
           <div className="kpi-grid">{kpis.map((kpi) => <KpiCard key={kpi.label} kpi={kpi} />)}</div>
-          {role === 'Patient' ? <PatientDashboard remoteMetrics={remoteHealthMetrics} onAction={handleAction} onOpenDetail={openDetail} /> : <>
+          {role === 'Patient' ? <PatientDashboard appointments={remoteAppointments} remoteMetrics={remoteHealthMetrics} onAction={handleAction} onBookAppointment={() => setModal('appointment')} onOpenDetail={openDetail} /> : <>
             <div className="main-grid">
               <section className="panel schedule-panel"><div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div><div className="schedule-list">{schedule.slice(0, showAllSchedule ? schedule.length : 6).map((item) => <button key={`${item.time}-${item.name}`} className={`schedule-row ${selectedAppointment === item.name ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.name); openDetail({ eyebrow: 'Appointment', title: item.name, meta: item.detail, tone: item.color === 'violet' ? 'violet' : item.color === 'mint' ? 'mint' : 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: item.time }, { label: 'Room', value: item.room }, { label: 'Care team', value: item.detail.split(' · ')[1] ?? 'General care' }], timeline: [{ label: 'Status', value: 'Confirmed' }, { label: 'Last updated', value: 'Just now' }] }); handleAction(`${item.name}'s appointment selected`, 'tap') }}><span className="schedule-time">{item.time}</span><span className={`schedule-dot dot-${item.color}`} /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.name}</strong><small>{item.detail}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button>)}</div></section>
               <section className="panel flow-panel"><div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div><div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div><FlowChart range={range} /><div className="flow-insights"><div><Icon name="people" size={22} /><strong>92<small>Currently in ED</small></strong><span className="insight-bad">▲ +8%</span></div><div><Icon name="bed" size={22} /><strong>14<small>Waiting for bed</small></strong><span className="insight-bad">▲ +27%</span></div><div><Icon name="clock" size={22} /><strong>36 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ −18%</span></div><div><Icon name="arrow" size={22} /><strong>28<small>Discharges today</small></strong><span className="insight-good">▲ +12%</span></div></div></section>
@@ -541,7 +573,7 @@ function App() {
 
     {mobileNavOpen && <button className="mobile-scrim" aria-label="Dismiss navigation overlay" onClick={() => setMobileNavOpen(false)} />}
     {authOpen && <AuthDialog mode={authMode} onClose={() => setAuthOpen(false)} onModeChange={setAuthMode} onAuthenticated={handleAuthenticated} />}
-    {modal && <Modal type={modal} onClose={() => setModal(null)} onAction={(message) => { setModal(null); handleAction(message) }} />}
+    {modal && <Modal type={modal} role={role} canBookAppointment={sessionUser?.role === 'Patient'} onClose={() => setModal(null)} onRequestAuth={(mode) => { setModal(null); setAuthMode(mode); setAuthOpen(true) }} onCreateAppointment={handleCreateAppointment} onAction={handleAction} />}
     {detailItem && <DetailsDrawer item={detailItem} onClose={() => setDetailItem(null)} onAction={(message) => { setDetailItem(null); handleAction(message) }} />}
     {toast && <div className="toast" role="status"><span className="toast-icon"><Icon name="check" size={16} /></span>{toast}<button onClick={() => setToast(null)} aria-label="Dismiss"><Icon name="close" size={15} /></button></div>}
   </div>
@@ -571,19 +603,37 @@ function AuthDialog({ mode, onClose, onModeChange, onAuthenticated }: { mode: 'l
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close authentication dialog"><Icon name="close" size={19} /></button><div className="modal-symbol modal-symbol-primary"><Icon name="shield" size={23} /></div><span className="eyebrow">Secure care access</span><h2 id="auth-title">{mode === 'login' ? 'Sign in to MediNexus' : 'Create your patient account'}</h2><p>{mode === 'login' ? 'Use your server-backed session to access role-protected care data.' : 'Create a Patient account to sync health metrics and notifications.'}</p><form className="appointment-form" onSubmit={submit}>{mode === 'register' && <label>Full name<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" /></label>}<label>Email<input autoFocus={mode === 'login'} required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label><label>Password<input required minLength={12} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" /></label>{error && <div className="auth-error" role="alert"><Icon name="alert" size={16} />{error}</div>}<button className="button button-primary button-full" disabled={submitting} type="submit"><Icon name={submitting ? 'clock' : 'arrow'} size={17} />{submitting ? 'Connecting…' : mode === 'login' ? 'Sign in' : 'Create account'}</button></form><button className="text-button auth-switch" onClick={() => { setError(''); onModeChange(mode === 'login' ? 'register' : 'login') }}>{mode === 'login' ? 'Create a new patient account' : 'Already have an account? Sign in'}</button><small className="auth-note">Sessions are stored in an HttpOnly cookie and enforced by the API.</small></section></div>
 }
 
-function PatientDashboard({ remoteMetrics, onAction, onOpenDetail }: { remoteMetrics: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onOpenDetail: (item: DetailItem) => void }) {
-  const appointmentDetail: DetailItem = {
+function PatientDashboard({ appointments, remoteMetrics, onAction, onBookAppointment, onOpenDetail }: { appointments: RemoteAppointment[]; remoteMetrics: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onBookAppointment: () => void; onOpenDetail: (item: DetailItem) => void }) {
+  const nextAppointment = appointments.find((appointment) => Date.parse(appointment.appointmentAt) >= Date.now())
+  const appointmentDetail: DetailItem | null = nextAppointment ? {
     eyebrow: 'Next appointment',
-    title: 'Cardiology follow-up',
-    meta: 'Thursday · 10:30 AM · Room 301',
+    title: `${nextAppointment.department} visit`,
+    meta: new Date(nextAppointment.appointmentAt).toLocaleString(),
     tone: 'violet',
     icon: 'calendar',
-    facts: [{ label: 'Clinician', value: 'Dr. Elena Ruiz' }, { label: 'Department', value: 'Cardiology' }, { label: 'Visit type', value: 'Follow-up' }],
-    timeline: [{ label: 'Check-in opens', value: '10:15 AM' }, { label: 'Reminder', value: 'Tomorrow at 9:00 AM' }],
-    actionLabel: 'Reschedule appointment',
-  }
+    facts: [{ label: 'Clinician', value: nextAppointment.clinicianName }, { label: 'Department', value: nextAppointment.department }, { label: 'Status', value: nextAppointment.status }],
+    timeline: [{ label: 'Scheduled for', value: new Date(nextAppointment.appointmentAt).toLocaleString() }, { label: 'Location', value: nextAppointment.room }],
+  } : null
+
   return <>
-    <div className="patient-grid"><section className="panel care-plan-panel"><div className="patient-hero"><div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>92<small>%</small></strong></div></div><div className="plan-steps"><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Completed yesterday</small></div></div><div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>Cardiology follow-up</strong><small>Thursday · 10:30 AM</small></div><button className="text-button" onClick={() => onOpenDetail(appointmentDetail)}>Details <Icon name="arrow" size={15} /></button></div></div></section><section className="panel next-visit-panel"><div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>Cardiology follow-up</h2></div><button className="icon-button ghost" aria-label="More appointment options" onClick={() => onOpenDetail(appointmentDetail)}><Icon name="more" size={17} /></button></div><div className="visit-date"><span className="visit-day">18</span><div><strong>Thursday, September 18</strong><small>10:30 AM · Room 301</small></div></div><div className="doctor-line"><span className="avatar avatar-cyan">ER</span><div><strong>Dr. Elena Ruiz</strong><small>Cardiology</small></div><button className="icon-button ghost" aria-label="Message Dr. Elena Ruiz" onClick={() => onAction('Message composer opened', 'tap')}><Icon name="message" size={17} /></button></div><button className="button button-soft button-full" onClick={() => onOpenDetail(appointmentDetail)}>View appointment details <Icon name="arrow" size={16} /></button></section></div>
+    <div className="patient-grid">
+      <section className="panel care-plan-panel">
+        <div className="patient-hero"><div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>92<small>%</small></strong></div></div>
+        <div className="plan-steps">
+          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div>
+          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Completed yesterday</small></div></div>
+          {nextAppointment ? <div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>{nextAppointment.department} visit</strong><small>{new Date(nextAppointment.appointmentAt).toLocaleString()}</small></div><button className="text-button" onClick={() => appointmentDetail && onOpenDetail(appointmentDetail)}>Details <Icon name="arrow" size={15} /></button></div> : <div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>No upcoming appointment</strong><small>Request a visit with your care team.</small></div><button className="text-button" onClick={onBookAppointment}>Book <Icon name="arrow" size={15} /></button></div>}
+        </div>
+      </section>
+      <section className="panel next-visit-panel">
+        <div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>{nextAppointment ? `${nextAppointment.department} visit` : 'No visit scheduled'}</h2></div>{appointmentDetail && <button className="icon-button ghost" aria-label="More appointment options" onClick={() => onOpenDetail(appointmentDetail)}><Icon name="more" size={17} /></button>}</div>
+        {nextAppointment ? <>
+          <div className="visit-date"><span className="visit-day">{new Date(nextAppointment.appointmentAt).getDate()}</span><div><strong>{new Date(nextAppointment.appointmentAt).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</strong><small>{new Date(nextAppointment.appointmentAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · {nextAppointment.room}</small></div></div>
+          <div className="doctor-line"><span className="avatar avatar-cyan">{nextAppointment.clinicianName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span><div><strong>{nextAppointment.clinicianName}</strong><small>{nextAppointment.status}</small></div><button className="icon-button ghost" aria-label="Message care team" onClick={() => onAction('Message composer opened', 'tap')}><Icon name="message" size={17} /></button></div>
+          <button className="button button-soft button-full" onClick={() => appointmentDetail && onOpenDetail(appointmentDetail)}>View appointment details <Icon name="arrow" size={16} /></button>
+        </> : <><p className="page-subtitle">Your appointment requests will appear here once booked.</p><button className="button button-primary button-full" onClick={onBookAppointment}><Icon name="calendar" size={17} />Book an appointment</button></>}
+      </section>
+    </div>
     <HealthTracker compact remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} />
   </>
 }
@@ -633,9 +683,38 @@ function ModuleView({ activeNav, rows, search, remoteMetrics, onAction, onEmerge
   return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and confidence.</p></div><div className="heading-actions"><button className="button button-primary" onClick={() => onAction(`${activeNav} creation flow opened`)}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div><div className="module-toolbar"><div className="module-count"><strong>{rows.length}</strong> active records {search && <span>matching “{search}”</span>}</div><div className="module-tools"><button className="button button-soft" onClick={() => onAction('Filters opened')}><Icon name="filter" size={17} />Filter</button><button className="button button-soft" onClick={() => onAction('Report export started')}><Icon name="download" size={17} />Export</button></div></div><section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row) => <button className="module-row" key={row.label} onClick={() => onOpenDetail({ eyebrow: activeNav, title: row.label, meta: row.meta, tone: row.tone === 'coral' ? 'coral' : row.tone === 'violet' ? 'violet' : row.tone === 'mint' ? 'mint' : 'cyan', icon: activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity', facts: [{ label: 'Status / value', value: row.value }, { label: 'Module', value: activeNav }, { label: 'Last updated', value: 'Just now' }], actionLabel: `Open ${row.label}` })}><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or clear the global search.</p></div>}</section></div>
 }
 
-function Modal({ type, onClose, onAction }: { type: 'appointment' | 'emergency'; onClose: () => void; onAction: (message: string) => void }) {
+function Modal({ type, role, canBookAppointment, onClose, onRequestAuth, onCreateAppointment, onAction }: { type: 'appointment' | 'emergency'; role: Role; canBookAppointment: boolean; onClose: () => void; onRequestAuth: (mode: 'login' | 'register') => void; onCreateAppointment: (department: string, appointmentAt: string) => Promise<void>; onAction: (message: string) => void }) {
   const emergency = type === 'emergency'
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className={`modal ${emergency ? 'modal-emergency' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close dialog"><Icon name="close" size={19} /></button><div className={`modal-symbol ${emergency ? 'modal-symbol-danger' : 'modal-symbol-primary'}`}><Icon name={emergency ? 'alert' : 'calendar'} size={23} /></div><span className="eyebrow">{emergency ? 'Priority access' : 'Schedule care'}</span><h2 id="modal-title">{emergency ? 'Open emergency access' : 'Create new appointment'}</h2><p>{emergency ? 'This will open the protected emergency workflow for triage, patient identification, and bed coordination.' : 'Start a new appointment request and route it to the right care team.'}</p>{emergency ? <div className="emergency-modal-options"><button onClick={() => onAction('Emergency triage workflow opened')}><span className="option-icon option-icon-danger"><Icon name="alert" size={19} /></span><div><strong>Start emergency triage</strong><small>Register a new emergency case</small></div><Icon name="arrow" size={17} /></button><button onClick={() => onAction('Critical patient queue opened')}><span className="option-icon option-icon-violet"><Icon name="bed" size={19} /></span><div><strong>Review critical queue</strong><small>See patients awaiting immediate care</small></div><Icon name="arrow" size={17} /></button></div> : <div className="appointment-form"><label>Patient or record<input autoFocus placeholder="Search by name or patient ID" /></label><label>Care team<select defaultValue=""><option value="" disabled>Select department</option><option>Cardiology</option><option>Internal Medicine</option><option>Orthopedics</option><option>Pediatrics</option></select></label><div className="form-split"><label>Date<input type="date" defaultValue="2026-09-18" /></label><label>Time<select defaultValue="10:30"><option>09:00</option><option>10:30</option><option>13:00</option><option>14:30</option></select></label></div><button className="button button-primary button-full" onClick={() => onAction('Appointment draft created')}>Continue to review <Icon name="arrow" size={17} /></button></div>}</section></div>
+  const [department, setDepartment] = useState('')
+  const [date, setDate] = useState('')
+  const [time, setTime] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const submitAppointment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError('')
+    const localAppointmentAt = new Date(`${date}T${time}`)
+    if (!Number.isFinite(localAppointmentAt.getTime()) || localAppointmentAt.getTime() <= Date.now()) {
+      setError('Choose a future date and time.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await onCreateAppointment(department, localAppointmentAt.toISOString())
+      onClose()
+      onAction('Appointment request submitted for confirmation.')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'The appointment request could not be submitted.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const now = new Date()
+  const minimumDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className={`modal ${emergency ? 'modal-emergency' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close dialog"><Icon name="close" size={19} /></button><div className={`modal-symbol ${emergency ? 'modal-symbol-danger' : 'modal-symbol-primary'}`}><Icon name={emergency ? 'alert' : 'calendar'} size={23} /></div><span className="eyebrow">{emergency ? 'Priority access' : 'Schedule care'}</span><h2 id="modal-title">{emergency ? 'Open emergency access' : 'Request an appointment'}</h2><p>{emergency ? 'This will open the protected emergency workflow for triage, patient identification, and bed coordination.' : 'Choose a department and future time. Your request is saved to your patient account and remains pending confirmation.'}</p>{emergency ? <div className="emergency-modal-options"><button onClick={() => { onClose(); onAction('Emergency triage workflow opened') }}><span className="option-icon option-icon-danger"><Icon name="alert" size={19} /></span><div><strong>Start emergency triage</strong><small>Register a new emergency case</small></div><Icon name="arrow" size={17} /></button><button onClick={() => { onClose(); onAction('Critical patient queue opened') }}><span className="option-icon option-icon-violet"><Icon name="bed" size={19} /></span><div><strong>Review critical queue</strong><small>See patients awaiting immediate care</small></div><Icon name="arrow" size={17} /></button></div> : canBookAppointment ? <form className="appointment-form" onSubmit={submitAppointment}><label>Care team<select required autoFocus value={department} onChange={(event) => setDepartment(event.target.value)}><option value="" disabled>Select department</option><option>Cardiology</option><option>Internal Medicine</option><option>Orthopedics</option><option>Pediatrics</option></select></label><div className="form-split"><label>Date<input required type="date" min={minimumDate} value={date} onChange={(event) => setDate(event.target.value)} /></label><label>Time<input required type="time" value={time} onChange={(event) => setTime(event.target.value)} /></label></div>{error && <div className="auth-error" role="alert"><Icon name="alert" size={16} />{error}</div>}<button className="button button-primary button-full" disabled={submitting} type="submit"><Icon name={submitting ? 'clock' : 'calendar'} size={17} />{submitting ? 'Submitting request…' : 'Request appointment'}</button></form> : role === 'Patient' ? <div className="appointment-form"><p>Sign in or create a patient account to save and view appointment requests.</p><button className="button button-primary button-full" onClick={() => onRequestAuth('login')}>Sign in</button><button className="button button-soft button-full" onClick={() => onRequestAuth('register')}>Create patient account</button></div> : <div className="auth-error" role="status">Appointment booking is available to signed-in Patient accounts. Staff scheduling is not connected yet.</div>}</section></div>
 }
 
 export default App
