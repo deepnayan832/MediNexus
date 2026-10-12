@@ -17,6 +17,17 @@ export type RemoteHealthMetric = {
   recordedAt: string
 }
 
+export type ApiAppointment = {
+  id: string
+  patientId: string
+  patientName: string
+  clinicianName: string
+  department: string
+  appointmentAt: string
+  room: string
+  status: string
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '').trim().replace(/\/+$/, '')
 const API_TIMEOUT_MS = 10_000
 
@@ -116,6 +127,56 @@ export function getHealthMetrics() {
       || !('recordedAt' in metric) || typeof metric.recordedAt !== 'string'
     ))) throw new Error('The MediNexus API returned invalid health data.')
     return result.metrics as RemoteHealthMetric[]
+  })
+}
+
+export function createHealthMetricEntry(input: { metricType: RemoteHealthMetric['metricType']; value: number; unit: string; goalValue?: number | null; recordedAt?: string }) {
+  return request<{ metric?: unknown }>('/api/health-metrics', {
+    method: 'POST',
+    body: JSON.stringify({
+      metricType: input.metricType,
+      value: input.value,
+      unit: input.unit,
+      ...(input.goalValue !== undefined ? { goalValue: input.goalValue } : {}),
+      ...(input.recordedAt ? { recordedAt: input.recordedAt } : {}),
+    }),
+  }).then((result) => {
+    const metric = result.metric
+    if (!metric || typeof metric !== 'object'
+      || !('id' in metric) || typeof metric.id !== 'string'
+      || !('metricType' in metric) || !['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'].includes(String(metric.metricType))
+      || !('value' in metric) || typeof metric.value !== 'number' || !Number.isFinite(metric.value)
+      || !('unit' in metric) || typeof metric.unit !== 'string'
+      || !('recordedAt' in metric) || typeof metric.recordedAt !== 'string') {
+      throw new Error('The MediNexus API returned an invalid health metric.')
+    }
+    return metric as RemoteHealthMetric
+  })
+}
+
+export function getAppointments() {
+  return request<{ appointments?: unknown }>('/api/appointments').then((result) => {
+    if (!Array.isArray(result.appointments)) {
+      throw new Error('The MediNexus API returned invalid appointment data.')
+    }
+    return result.appointments as ApiAppointment[]
+  })
+}
+
+export function createAppointment(input: { department: string; appointmentAt: string }) {
+  return request<{ appointment?: unknown }>('/api/appointments', {
+    method: 'POST',
+    body: JSON.stringify({ department: input.department, appointmentAt: input.appointmentAt }),
+  }).then((result) => {
+    const appointment = result.appointment
+    if (!appointment || typeof appointment !== 'object'
+      || !('id' in appointment) || typeof appointment.id !== 'string'
+      || !('patientId' in appointment) || typeof appointment.patientId !== 'string'
+      || !('department' in appointment) || typeof appointment.department !== 'string'
+      || !('appointmentAt' in appointment) || typeof appointment.appointmentAt !== 'string') {
+      throw new Error('The MediNexus API returned an invalid appointment.')
+    }
+    return appointment as ApiAppointment
   })
 }
 
