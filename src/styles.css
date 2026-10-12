@@ -311,3 +311,18 @@ html[data-theme='dark'] .health-metric:hover { background: #1b4037; }
 html[data-theme='dark'] .drawer-facts > div,
 html[data-theme='dark'] .drawer-timeline > div { border-color: #31564e; }
 html[data-theme='dark'] .critical-callout { background: #38222a; }
+
+/* MediNexus Interactive Workflow Extensions */
+.appointment-form textarea { width: 100%; min-height: 68px; padding: 8px 11px; border: 1px solid #e0e6ee; border-radius: 8px; outline: 0; color: var(--ink); background: #fafbfd; font-size: 11px; font-family: inherit; resize: vertical; box-sizing: border-box; }
+.appointment-form textarea:focus { border-color: #97dce2; box-shadow: 0 0 0 3px rgba(25, 197, 209, .1); }
+html[data-theme='dark'] .appointment-form textarea { border-color: #2a3d62; color: #dce9ff; background: #152849; }
+
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.filter-pill { padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; border: 1px solid #e0e6ee; background: #fff; color: var(--ink); cursor: pointer; transition: all .15s ease; }
+.filter-pill:hover { border-color: #6b5de0; }
+.filter-pill.active { background: #6b5de0; border-color: #6b5de0; color: #fff; }
+html[data-theme='dark'] .filter-pill { background: #152849; border-color: #2a3d62; color: #dce9ff; }
+html[data-theme='dark'] .filter-pill.active { background: #6b5de0; border-color: #6b5de0; color: #fff; }
+
+.notification-badge { position: absolute; top: -3px; right: -3px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 10px; background: #ed5065; color: #fff; font-size: 9px; font-weight: 800; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.drawer-action-btn-danger { background: #ed5065 !important; border-color: #ed5065 !important; color: #fff !important; }
