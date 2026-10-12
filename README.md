@@ -30,7 +30,7 @@ The repository includes a Dockerfile and Docker Compose setup for hosting the **
 
 1. Copy `.env.example` to `.env`.
 2. Set `DOMAIN` to the real DNS name and `MEDINEXUS_PUBLIC_ORIGIN` to the matching `https://...` origin. Change the example values before running Compose.
-3. Set a strong password for the provisioned `MEDINEXUS_ADMIN_PASSWORD` and its email/name fields if you want an initial administrator. Keep all passwords in `.env`; never commit that file or use real patient credentials for a demo.
+3. Set a strong password of at least 16 characters for the provisioned `MEDINEXUS_ADMIN_PASSWORD` and its email/name fields if you want an initial administrator. Keep all passwords in `.env`; never commit that file or use real patient credentials for a demo.
 4. Start the app:
 
 ```sh

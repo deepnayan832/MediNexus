@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
 
 let server: ChildProcess | undefined
 let databaseDirectory = ''
@@ -133,4 +134,66 @@ test('rate limits repeated login attempts by trusted client address', async () =
   assert.equal(limited.response.status, 429)
   assert.equal(limited.response.headers.get('retry-after'), '60')
   assert.equal((limited.body.error as Record<string, unknown>).code, 'RATE_LIMITED')
+})
+
+
+test('keeps shared notification read state private to each user', async () => {
+  const suffix = Date.now()
+  async function register(email: string) {
+    const result = await request('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Shared Notice Test', email, password: 'SufficientlyLong!42' }),
+    })
+    assert.equal(result.response.status, 201)
+    return (result.response.headers.get('set-cookie') ?? '').split(';')[0]
+  }
+
+  const firstCookie = await register(`notify-one-${suffix}@example.test`)
+  const secondCookie = await register(`notify-two-${suffix}@example.test`)
+  const notificationId = `ntf_shared_${suffix}`
+  const db = new DatabaseSync(join(databaseDirectory, 'test.sqlite'))
+  db.prepare('INSERT INTO notifications (id, user_id, title, body, kind, read_at, created_at) VALUES (?, NULL, ?, ?, ?, NULL, ?)').run(
+    notificationId, 'Shared test alert', 'This is a test notification.', 'info', new Date().toISOString(),
+  )
+  db.close()
+
+  async function findShared(cookie: string) {
+    const result = await request('/api/notifications', { headers: { Cookie: cookie } })
+    assert.equal(result.response.status, 200)
+    const notifications = result.body.notifications as Array<{ id: string; readAt: string | null }>
+    return notifications.find((item) => item.id === notificationId)
+  }
+
+  assert.equal((await findShared(firstCookie))?.readAt, null)
+  assert.equal((await findShared(secondCookie))?.readAt, null)
+
+  const marked = await request(`/api/notifications/${notificationId}/read`, {
+    method: 'POST',
+    headers: { Cookie: firstCookie },
+  })
+  assert.equal(marked.response.status, 200)
+  assert.ok((await findShared(firstCookie))?.readAt)
+  assert.equal((await findShared(secondCookie))?.readAt, null)
+})
+
+test('rejects weak passwords for environment-provisioned privileged users', () => {
+  const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs')
+  const result = spawnSync(process.execPath, [tsxCli, 'server/bootstrap.ts'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      PORT: '0',
+      MEDINEXUS_HOST: '127.0.0.1',
+      MEDINEXUS_DB_PATH: join(databaseDirectory, 'weak-password.sqlite'),
+      MEDINEXUS_DEMO_DATA: 'false',
+      MEDINEXUS_ADMIN_EMAIL: 'weak-admin@example.test',
+      MEDINEXUS_ADMIN_PASSWORD: 'weak-password',
+    },
+    encoding: 'utf8',
+    timeout: 5000,
+  })
+  assert.notEqual(result.status, 0, 'server must refuse weak provisioned credentials')
+  assert.match((result.stderr || '') + (result.stdout || ''), /MEDINEXUS_ADMIN_PASSWORD must be at least 16 characters/)
 })
