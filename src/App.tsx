@@ -1,5 +1,56 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { checkApiHealth, getCurrentUser, getHealthMetrics, login as apiLogin, logout as apiLogout, register as apiRegister, type ApiStatus, type ApiUser, type RemoteHealthMetric } from './api'
+import {
+  checkApiHealth,
+  createAdmission,
+  createAppointment,
+  createEmergencyCase,
+  createInvoice,
+  createLabOrder,
+  createPatient,
+  createPrescription,
+  dischargeAdmission,
+  dispensePrescription,
+  downloadExport,
+  getAdmissions,
+  getAppointments,
+  getBeds,
+  getCurrentUser,
+  getDashboard,
+  getEmergencyCases,
+  getHealthMetrics,
+  getInsuranceClaims,
+  getInvoices,
+  getLabs,
+  getMedications,
+  getNotifications,
+  getPatients,
+  getPrescriptions,
+  logHealthMetric,
+  login as apiLogin,
+  logout as apiLogout,
+  markAllNotificationsRead,
+  markNotificationRead,
+  payInvoice,
+  register as apiRegister,
+  updateAppointment,
+  updateBedStatus,
+  updateEmergencyCase,
+  updateLabOrder,
+  type ApiAdmission,
+  type ApiAppointment,
+  type ApiBed,
+  type ApiDashboardSummary,
+  type ApiEmergencyCase,
+  type ApiInvoice,
+  type ApiLabOrder,
+  type ApiMedication,
+  type ApiNotification,
+  type ApiPatient,
+  type ApiPrescription,
+  type ApiStatus,
+  type ApiUser,
+  type RemoteHealthMetric,
+} from './api'
 
 type Role = 'Admin' | 'Doctor' | 'Staff' | 'Patient'
 type Theme = 'light' | 'dark'
@@ -65,7 +116,11 @@ type DetailItem = {
   facts: { label: string; value: string }[]
   timeline?: { label: string; value: string }[]
   actionLabel?: string
+  actionType?: 'complete_appointment' | 'cancel_appointment' | 'dispense_rx' | 'discharge_admission' | 'pay_invoice' | 'complete_lab' | 'treat_emergency'
+  rawId?: string
 }
+
+type ModalType = 'appointment' | 'emergency' | 'health_metric' | 'patient' | 'prescription' | 'lab' | 'admission' | 'invoice'
 
 const roleProfiles: Record<Role, { name: string; title: string; initials: string; workspace: string }> = {
   Admin: { name: 'Dr. Morgan', title: 'Chief Medical Officer', initials: 'DM', workspace: 'Operations' },
@@ -114,52 +169,6 @@ const navByRole: Record<Role, NavItem[]> = {
   ],
 }
 
-const baseKpis: Record<Role, Kpi[]> = {
-  Admin: [
-    { label: 'Appointments', value: '48', delta: '+12%', deltaTone: 'positive', note: 'vs. last week', color: 'cyan', icon: 'calendar', points: '2,26 14,21 26,24 38,16 50,19 62,11 74,13 86,7 98,10' },
-    { label: 'Patients in care', value: '136', delta: '+6%', deltaTone: 'positive', note: 'vs. yesterday', color: 'mint', icon: 'people', points: '2,28 14,24 26,25 38,18 50,20 62,13 74,14 86,5 98,8' },
-    { label: 'Bed occupancy', value: '78%', delta: '+4%', deltaTone: 'negative', note: 'vs. yesterday', color: 'coral', icon: 'bed', points: '2,24 14,23 26,19 38,23 50,17 62,20 74,12 86,14 98,5' },
-    { label: 'Revenue this month', value: '$2.4M', delta: '+18%', deltaTone: 'positive', note: 'vs. last month', color: 'violet', icon: 'reports', points: '2,28 14,22 26,25 38,19 50,20 62,13 74,15 86,7 98,9' },
-  ],
-  Doctor: [
-    { label: "Today's appointments", value: '12', delta: '+2', deltaTone: 'positive', note: 'vs. average day', color: 'cyan', icon: 'calendar', points: '2,25 14,20 26,24 38,14 50,18 62,12 74,14 86,7 98,9' },
-    { label: 'Patients in care', value: '24', delta: '+6%', deltaTone: 'positive', note: 'vs. yesterday', color: 'mint', icon: 'people', points: '2,28 14,25 26,26 38,21 50,19 62,14 74,16 86,8 98,7' },
-    { label: 'Follow-up rate', value: '86%', delta: '+8%', deltaTone: 'positive', note: 'vs. last month', color: 'violet', icon: 'activity', points: '2,25 14,24 26,20 38,18 50,19 62,12 74,11 86,6 98,8' },
-    { label: 'Notes to sign', value: '18', delta: '-4', deltaTone: 'positive', note: 'since yesterday', color: 'coral', icon: 'file', points: '2,7 14,12 26,9 38,17 50,16 62,20 74,18 86,25 98,22' },
-  ],
-  Staff: [
-    { label: 'Check-ins today', value: '48', delta: '+12%', deltaTone: 'positive', note: 'vs. last week', color: 'cyan', icon: 'calendar', points: '2,26 14,21 26,24 38,16 50,19 62,11 74,13 86,7 98,10' },
-    { label: 'Patients in care', value: '136', delta: '+6%', deltaTone: 'positive', note: 'vs. yesterday', color: 'mint', icon: 'people', points: '2,28 14,24 26,25 38,18 50,20 62,13 74,14 86,5 98,8' },
-    { label: 'Bed occupancy', value: '78%', delta: '+4%', deltaTone: 'negative', note: 'vs. yesterday', color: 'coral', icon: 'bed', points: '2,24 14,23 26,19 38,23 50,17 62,20 74,12 86,14 98,5' },
-    { label: 'Open tasks', value: '24', delta: '-18%', deltaTone: 'positive', note: 'vs. yesterday', color: 'violet', icon: 'check', points: '2,28 14,24 26,26 38,21 50,18 62,16 74,11 86,13 98,7' },
-  ],
-  Patient: [
-    { label: 'Upcoming visits', value: '3', delta: '+1', deltaTone: 'neutral', note: 'this month', color: 'cyan', icon: 'calendar', points: '2,21 14,18 26,21 38,16 50,19 62,14 74,17 86,12 98,14' },
-    { label: 'Active prescriptions', value: '1', delta: 'On track', deltaTone: 'positive', note: 'medication plan', color: 'mint', icon: 'pharmacy', points: '2,25 14,22 26,24 38,20 50,19 62,15 74,16 86,11 98,9' },
-    { label: 'Recovery plan', value: '92%', delta: '+8%', deltaTone: 'positive', note: 'vs. last check-in', color: 'violet', icon: 'heart', points: '2,28 14,25 26,24 38,20 50,18 62,16 74,12 86,11 98,6' },
-    { label: 'Outstanding balance', value: '$240', delta: 'Due Sep 18', deltaTone: 'neutral', note: 'billing overview', color: 'coral', icon: 'reports', points: '2,10 14,15 26,13 38,18 50,17 62,19 74,18 86,24 98,22' },
-  ],
-}
-
-const schedule = [
-  { time: '08:00', name: 'Sarah Kim', detail: 'Follow-up · Cardiology', room: 'Room 301', color: 'cyan' },
-  { time: '08:30', name: 'James Patel', detail: 'New patient · Internal Medicine', room: 'Room 204', color: 'blue' },
-  { time: '09:00', name: 'Maria Lopez', detail: 'Pre-op assessment · Surgery', room: 'Room 312', color: 'mint' },
-  { time: '10:30', name: 'Robert Chen', detail: 'Follow-up · Endocrinology', room: 'Room 218', color: 'violet' },
-  { time: '11:00', name: 'Aisha Rahman', detail: 'Consultation · Pulmonology', room: 'Room 305', color: 'cyan' },
-  { time: '13:00', name: 'Thomas Wright', detail: 'Post-op follow-up · Orthopedics', room: 'Room 320', color: 'mint' },
-  { time: '14:30', name: 'Emily Carter', detail: 'New patient · Pediatrics', room: 'Room 210', color: 'violet' },
-  { time: '16:00', name: 'Daniel Park', detail: 'Follow-up · Neurology', room: 'Room 228', color: 'cyan' },
-]
-
-const activity = [
-  { time: '2 min ago', name: 'Dr. Elena Ruiz', detail: 'Completed round for Room 305', initials: 'ER', tone: 'cyan', status: 'On track' },
-  { time: '12 min ago', name: 'Nurse James Wilson', detail: 'Vitals updated for Room 218', initials: 'JW', tone: 'blue', status: 'On track' },
-  { time: '28 min ago', name: 'Dr. Priya Shah', detail: 'New note added for Room 301', initials: 'PS', tone: 'violet', status: 'On track' },
-  { time: '1 hour ago', name: 'Resp. Therapist Mark Lee', detail: 'Treatment completed for Room 320', initials: 'ML', tone: 'mint', status: 'On track' },
-  { time: '2 hours ago', name: 'Pharmacist Olivia Brown', detail: 'Medication review completed', initials: 'OB', tone: 'coral', status: 'Needs attention' },
-]
-
 const healthMetrics = [
   { label: 'Steps', value: '6,842', goal: '8,000 goal', progress: 86, tone: 'cyan' as const, icon: 'activity' as IconName, meta: 'Today · 4.8 km walked' },
   { label: 'Heart rate', value: '72 bpm', goal: 'Resting average', progress: 72, tone: 'coral' as const, icon: 'heart' as IconName, meta: 'Healthy range · 60–100 bpm' },
@@ -176,58 +185,6 @@ const healthMetricTypes: Record<string, RemoteHealthMetric['metricType']> = {
   Hydration: 'hydration',
   'Blood oxygen': 'blood_oxygen',
   Weight: 'weight',
-}
-
-const moduleRows: Record<string, { label: string; meta: string; value: string; tone: 'cyan' | 'mint' | 'violet' | 'coral' }[]> = {
-  Patients: [
-    { label: 'Olivia Harris', meta: 'P-20391 · Cardiology', value: 'Stable', tone: 'mint' },
-    { label: 'James Patel', meta: 'P-19402 · Internal Medicine', value: 'New intake', tone: 'cyan' },
-    { label: 'Maria Lopez', meta: 'P-18841 · Surgery', value: 'Pre-op', tone: 'violet' },
-    { label: 'Robert Chen', meta: 'P-17438 · Endocrinology', value: 'Follow-up', tone: 'cyan' },
-  ],
-  Appointments: schedule.slice(0, 5).map((item) => ({ label: item.name, meta: `${item.time} · ${item.detail}`, value: item.room, tone: item.color === 'coral' ? 'coral' : item.color === 'violet' ? 'violet' : item.color === 'mint' ? 'mint' : 'cyan' })),
-  'Inpatient Care': [
-    { label: 'Ward A · Cardiology', meta: '32 beds · 26 occupied', value: '81%', tone: 'cyan' },
-    { label: 'Ward B · Surgery', meta: '28 beds · 22 occupied', value: '79%', tone: 'violet' },
-    { label: 'Ward C · Recovery', meta: '24 beds · 15 occupied', value: '63%', tone: 'mint' },
-    { label: 'ICU · Critical Care', meta: '12 beds · 11 occupied', value: '92%', tone: 'coral' },
-  ],
-  Emergency: [
-    { label: 'ED-24018 · Trauma', meta: 'Arrived 08:42 · Bed request active', value: 'Critical', tone: 'coral' },
-    { label: 'ED-24016 · Cardiac', meta: 'Arrived 08:21 · Treatment ongoing', value: 'Serious', tone: 'violet' },
-    { label: 'ED-24012 · Respiratory', meta: 'Arrived 07:58 · Awaiting consult', value: 'Stable', tone: 'mint' },
-    { label: 'ED-24008 · Fall', meta: 'Arrived 07:44 · Observation', value: 'Observation', tone: 'cyan' },
-  ],
-  Pharmacy: [
-    { label: 'Amoxicillin 500mg', meta: 'Batch AMX-042 · 1,240 units', value: 'In stock', tone: 'mint' },
-    { label: 'Insulin glargine', meta: 'Batch INS-117 · 42 units', value: 'Low stock', tone: 'coral' },
-    { label: 'Atorvastatin 20mg', meta: 'Batch ATV-298 · 486 units', value: 'In stock', tone: 'mint' },
-    { label: 'Salbutamol inhaler', meta: 'Batch SAL-081 · 180 units', value: 'Reorder', tone: 'violet' },
-  ],
-  'Lab & Diagnostics': [
-    { label: 'CBC · Sarah Kim', meta: 'Ordered 08:12 · Hematology', value: 'Processing', tone: 'violet' },
-    { label: 'Troponin · James Patel', meta: 'Ordered 07:51 · Urgent', value: 'Needs review', tone: 'coral' },
-    { label: 'MRI · Maria Lopez', meta: 'Scheduled 11:30 · Radiology', value: 'Scheduled', tone: 'cyan' },
-    { label: 'Lipid panel · Robert Chen', meta: 'Collected yesterday · Biochemistry', value: 'Ready', tone: 'mint' },
-  ],
-  'Billing & Revenue': [
-    { label: 'October revenue', meta: 'Across 4 departments · Updated today', value: '$2.4M', tone: 'violet' },
-    { label: 'Claims pending', meta: '32 submissions · Payer review', value: '$186K', tone: 'coral' },
-    { label: 'Collected today', meta: 'Front desk and portal payments', value: '$42.8K', tone: 'mint' },
-    { label: 'Insurance follow-ups', meta: '8 cases need documents', value: '8 open', tone: 'cyan' },
-  ],
-  Reports: [
-    { label: 'Patient experience', meta: 'Monthly operating review · 92% response', value: '92%', tone: 'mint' },
-    { label: 'Average ED wait time', meta: 'Live metric · Across all shifts', value: '36 min', tone: 'cyan' },
-    { label: 'Readmission rate', meta: '30-day cohort · Quality review', value: '4.8%', tone: 'violet' },
-    { label: 'Critical incidents', meta: 'Last 30 days · Safety review', value: '2', tone: 'coral' },
-  ],
-  Settings: [
-    { label: 'Care team permissions', meta: 'Role-based access · 12 policies', value: 'Healthy', tone: 'mint' },
-    { label: 'Data integrations', meta: 'EHR, lab, pharmacy · 4 connected', value: 'Connected', tone: 'cyan' },
-    { label: 'Audit log', meta: 'Last export · Today at 06:12', value: 'Up to date', tone: 'violet' },
-    { label: 'Backup status', meta: 'Encrypted snapshot · 3 hours ago', value: 'Protected', tone: 'mint' },
-  ],
 }
 
 function Icon({ name, size = 20, strokeWidth = 1.8 }: { name: IconName; size?: number; strokeWidth?: number }) {
@@ -249,6 +206,7 @@ function Icon({ name, size = 20, strokeWidth = 1.8 }: { name: IconName; size?: n
     case 'flask': return <svg {...common}><path d="M9 3h6M10 3v6L4.8 18.2A1.8 1.8 0 0 0 6.3 21h11.4a1.8 1.8 0 0 0 1.5-2.8L14 9V3M7.5 16h9" /></svg>
     case 'grid': return <svg {...common}><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></svg>
     case 'heart': return <svg {...common}><path d="M20.8 8.7c0 5.3-8.8 10.1-8.8 10.1S3.2 14 3.2 8.7A4.7 4.7 0 0 1 12 6.2a4.7 4.7 0 0 1 8.8 2.5Z" /></svg>
+    case 'home': return <svg {...common}><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>
     case 'lab': return <svg {...common}><path d="M9 3h6M10 3v6l-5.6 8.8A1.5 1.5 0 0 0 5.7 20h12.6a1.5 1.5 0 0 0 1.3-2.2L14 9V3M7.6 15h8.8" /></svg>
     case 'logout': return <svg {...common}><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M15 16l4-4-4-4M19 12H9" /></svg>
     case 'menu': return <svg {...common}><path d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -276,7 +234,7 @@ function BrandMark() {
   return <div className="brand-mark" aria-hidden="true"><span /><span /><span /><span /></div>
 }
 
-function Sparkline({ points, color }: { points: string; color: Kpi['color'] }) {
+function Sparkline({ points, color }: { points: string; color: string }) {
   return <svg className={`sparkline sparkline-${color}`} viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true"><polyline points={points} /></svg>
 }
 
@@ -319,6 +277,8 @@ function App() {
   const [activeNav, setActiveNav] = useState('Operations')
   const [range, setRange] = useState<'Today' | '7d' | '30d'>('Today')
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('All')
+  const [showFilterBar, setShowFilterBar] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === 'undefined') return 'light'
     const saved = window.localStorage.getItem('medinexus-theme')
@@ -330,12 +290,27 @@ function App() {
   const [sessionUser, setSessionUser] = useState<ApiUser | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  
+  // Real server entities
+  const [dashboardSummary, setDashboardSummary] = useState<ApiDashboardSummary | null>(null)
+  const [liveAppointments, setLiveAppointments] = useState<ApiAppointment[]>([])
+  const [livePatients, setLivePatients] = useState<ApiPatient[]>([])
+  const [liveBeds, setLiveBeds] = useState<ApiBed[]>([])
+  const [liveAdmissions, setLiveAdmissions] = useState<ApiAdmission[]>([])
+  const [liveEmergencyCases, setLiveEmergencyCases] = useState<ApiEmergencyCase[]>([])
+  const [liveMedications, setLiveMedications] = useState<ApiMedication[]>([])
+  const [livePrescriptions, setLivePrescriptions] = useState<ApiPrescription[]>([])
+  const [liveLabs, setLiveLabs] = useState<ApiLabOrder[]>([])
+  const [liveInvoices, setLiveInvoices] = useState<ApiInvoice[]>([])
   const [remoteHealthMetrics, setRemoteHealthMetrics] = useState<RemoteHealthMetric[]>([])
+  const [notifications, setNotifications] = useState<ApiNotification[]>([])
+  
+  // Navigation & Modals
   const [roleOpen, setRoleOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [preferencesOpen, setPreferencesOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [modal, setModal] = useState<'appointment' | 'emergency' | null>(null)
+  const [modal, setModal] = useState<ModalType | null>(null)
   const [detailItem, setDetailItem] = useState<DetailItem | null>(null)
   const [selectedAppointment, setSelectedAppointment] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -347,41 +322,98 @@ function App() {
     window.localStorage.setItem('medinexus-theme', theme)
   }, [theme])
 
+  // Initial API health & session check
   useEffect(() => {
     const controller = new AbortController()
-    checkApiHealth(controller.signal).then(() => setApiStatus('connected')).catch(() => {
-      if (!controller.signal.aborted) setApiStatus('offline')
-    })
+    checkApiHealth(controller.signal)
+      .then(() => setApiStatus('connected'))
+      .catch(() => {
+        if (!controller.signal.aborted) setApiStatus('offline')
+      })
     return () => controller.abort()
   }, [])
 
   useEffect(() => {
     let active = true
-    getCurrentUser().then((user) => {
-      if (!active || !user) return
-      setSessionUser(user)
-      setRole(user.role)
-      setActiveNav(navByRole[user.role][0].label)
-    }).catch(() => {
-      // Offline mode intentionally keeps the local demo workspace available.
-    })
+    getCurrentUser()
+      .then((user) => {
+        if (!active || !user) return
+        setSessionUser(user)
+        setRole(user.role)
+        setActiveNav(navByRole[user.role][0].label)
+      })
+      .catch(() => {
+        // Offline demo workspace remains active
+      })
     return () => { active = false }
   }, [])
 
+  // Sync state with URL hash
   useEffect(() => {
-    if (sessionUser?.role !== 'Patient') {
-      setRemoteHealthMetrics([])
-      return
+    const handleHash = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '')
+      if (!hash) return
+      const parts = hash.split('/')
+      if (parts.length >= 2) {
+        const hashRole = parts[0][0].toUpperCase() + parts[0].slice(1).toLowerCase()
+        if (['Admin', 'Doctor', 'Staff', 'Patient'].includes(hashRole)) {
+          setRole(hashRole as Role)
+          const targetNav = decodeURIComponent(parts.slice(1).join('/')).replace(/-/g, ' ')
+          const matched = navByRole[hashRole as Role].find((item) => item.label.toLowerCase() === targetNav.toLowerCase())
+          if (matched) setActiveNav(matched.label)
+        }
+      }
     }
-    let active = true
-    getHealthMetrics().then((metrics) => {
-      if (active) setRemoteHealthMetrics(metrics)
-    }).catch(() => {
-      if (active) setRemoteHealthMetrics([])
-    })
-    return () => { active = false }
-  }, [sessionUser])
+    handleHash()
+    window.addEventListener('hashchange', handleHash)
+    return () => window.removeEventListener('hashchange', handleHash)
+  }, [])
 
+  // Refresh active module data from API
+  const refreshData = () => {
+    if (apiStatus !== 'connected') return
+
+    getDashboard()
+      .then((res) => {
+        setDashboardSummary(res.summary)
+        setLiveAppointments(res.appointments)
+      })
+      .catch(() => {})
+
+    getNotifications()
+      .then((res) => setNotifications(res))
+      .catch(() => {})
+
+    if (activeNav === 'Patients' || activeNav === 'My patients') {
+      getPatients()
+        .then((pts) => setLivePatients(pts))
+        .catch(() => {})
+    } else if (activeNav === 'Appointments') {
+      getAppointments()
+        .then((apts) => setLiveAppointments(apts))
+        .catch(() => {})
+    } else if (activeNav === 'Inpatient Care' || activeNav === 'Beds & wards') {
+      getBeds().then(setLiveBeds).catch(() => {})
+      getAdmissions().then(setLiveAdmissions).catch(() => {})
+    } else if (activeNav === 'Emergency' || activeNav === 'Queue management') {
+      getEmergencyCases().then(setLiveEmergencyCases).catch(() => {})
+    } else if (activeNav === 'Pharmacy' || activeNav === 'Prescriptions') {
+      getMedications().then(setLiveMedications).catch(() => {})
+      getPrescriptions().then(setLivePrescriptions).catch(() => {})
+    } else if (activeNav === 'Lab & Diagnostics' || activeNav === 'Lab results' || activeNav === 'Lab reports') {
+      getLabs().then(setLiveLabs).catch(() => {})
+    } else if (activeNav === 'Billing & Revenue' || activeNav === 'Billing support' || activeNav === 'Bills & insurance') {
+      getInvoices().then(setLiveInvoices).catch(() => {})
+    } else if (activeNav === 'Health tracker' || role === 'Patient') {
+      getHealthMetrics().then(setRemoteHealthMetrics).catch(() => {})
+    }
+  }
+
+  useEffect(() => {
+    refreshData()
+  }, [activeNav, role, apiStatus, sessionUser])
+
+  // Keyboard shortcut & Escape handlers
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -400,17 +432,312 @@ function App() {
     return () => window.removeEventListener('keydown', handleEscape)
   }, [])
 
-  const profile = sessionUser ? { ...roleProfiles[role], name: sessionUser.name, initials: sessionUser.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() } : roleProfiles[role]
+  const profile = sessionUser
+    ? { ...roleProfiles[role], name: sessionUser.name, initials: sessionUser.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() }
+    : roleProfiles[role]
   const navItems = navByRole[role]
-  const kpis = baseKpis[role]
   const workspaceRoles: Role[] = sessionUser ? [sessionUser.role] : (Object.keys(roleProfiles) as Role[])
   const isDashboard = activeNav === navItems[0].label
-  const rows = moduleRows[activeNav] ?? moduleRows.Patients
+
+  // Compute live KPIs
+  const kpis: Kpi[] = useMemo(() => {
+    if (role === 'Patient') {
+      const aptCount = dashboardSummary?.appointments ?? 3
+      const rxCount = dashboardSummary?.activePrescriptions ?? 1
+      const balance = dashboardSummary?.outstandingBalance ?? 240
+      return [
+        { label: 'Upcoming visits', value: String(aptCount), delta: 'Scheduled', deltaTone: 'neutral', note: 'patient portal', color: 'cyan', icon: 'calendar', points: '2,21 14,18 26,21 38,16 50,19 62,14 74,17 86,12 98,14' },
+        { label: 'Active prescriptions', value: String(rxCount), delta: 'On track', deltaTone: 'positive', note: 'active regimen', color: 'mint', icon: 'pharmacy', points: '2,25 14,22 26,24 38,20 50,19 62,15 74,16 86,11 98,9' },
+        { label: 'Care plan adherence', value: '94%', delta: '+6%', deltaTone: 'positive', note: 'vs. last check-in', color: 'violet', icon: 'heart', points: '2,28 14,25 26,24 38,20 50,18 62,16 74,12 86,11 98,6' },
+        { label: 'Outstanding balance', value: `$${balance}`, delta: balance > 0 ? 'Due soon' : 'Zero balance', deltaTone: balance > 0 ? 'negative' : 'positive', note: 'billing summary', color: 'coral', icon: 'reports', points: '2,10 14,15 26,13 38,18 50,17 62,19 74,18 86,24 98,22' },
+      ]
+    }
+    const aptCount = dashboardSummary?.appointments ?? (liveAppointments.length || 48)
+    const patientCount = dashboardSummary?.patients ?? (livePatients.length || 136)
+    const bedRate = dashboardSummary?.bedOccupancyRate !== undefined ? `${dashboardSummary.bedOccupancyRate}%` : '78%'
+    const revenue = dashboardSummary?.monthlyRevenue ? `$${(dashboardSummary.monthlyRevenue / 1000).toFixed(0)}K` : '$2.4M'
+    return [
+      { label: 'Appointments', value: String(aptCount), delta: '+12%', deltaTone: 'positive', note: 'active scheduled visits', color: 'cyan', icon: 'calendar', points: '2,26 14,21 26,24 38,16 50,19 62,11 74,13 86,7 98,10' },
+      { label: 'Patients in care', value: String(patientCount), delta: '+6%', deltaTone: 'positive', note: 'across departments', color: 'mint', icon: 'people', points: '2,28 14,24 26,25 38,18 50,20 62,13 74,14 86,5 98,8' },
+      { label: 'Bed occupancy', value: bedRate, delta: '+4%', deltaTone: 'negative', note: 'inpatient ward load', color: 'coral', icon: 'bed', points: '2,24 14,23 26,19 38,23 50,17 62,20 74,12 86,14 98,5' },
+      { label: 'Revenue this month', value: revenue, delta: '+18%', deltaTone: 'positive', note: 'settled collections', color: 'violet', icon: 'reports', points: '2,28 14,22 26,25 38,19 50,20 62,13 74,15 86,7 98,9' },
+    ]
+  }, [role, dashboardSummary, liveAppointments, livePatients])
+
+  // Derive rows for active module
+  type DisplayRow = {
+    id: string
+    label: string
+    meta: string
+    value: string
+    tone: 'cyan' | 'mint' | 'violet' | 'coral'
+    detail: DetailItem
+  }
+
+  const moduleRows: DisplayRow[] = useMemo(() => {
+    if (activeNav === 'Patients' || activeNav === 'My patients') {
+      if (livePatients.length > 0) {
+        return livePatients.map((p) => ({
+          id: p.id,
+          label: p.name,
+          meta: `${p.id} · ${p.department}`,
+          value: p.status,
+          tone: p.status === 'Critical' ? 'coral' : p.status === 'Stable' ? 'mint' : 'cyan',
+          detail: {
+            eyebrow: 'Patient Profile',
+            title: p.name,
+            meta: `${p.id} · ${p.department} · ${p.status}`,
+            tone: p.status === 'Critical' ? 'coral' : 'cyan',
+            icon: 'people',
+            facts: [
+              { label: 'Patient ID', value: p.id },
+              { label: 'Department', value: p.department },
+              { label: 'Status', value: p.status },
+              { label: 'DOB', value: p.dob || 'Unspecified' },
+              { label: 'Gender', value: p.gender || 'Unspecified' },
+              { label: 'Blood Group', value: p.bloodGroup || 'Unspecified' },
+              { label: 'Allergies', value: p.allergies || 'None reported' },
+            ],
+            timeline: [{ label: 'Enrolled', value: new Date(p.createdAt).toLocaleDateString() }],
+            actionLabel: 'Schedule Appointment',
+            rawId: p.id,
+          },
+        }))
+      }
+    }
+
+    if (activeNav === 'Appointments') {
+      if (liveAppointments.length > 0) {
+        return liveAppointments.map((a) => {
+          const dateStr = new Date(a.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          return {
+            id: a.id,
+            label: a.patientName || `Patient (${a.patientId})`,
+            meta: `${dateStr} · ${a.department} · ${a.clinicianName}`,
+            value: a.status,
+            tone: a.status === 'Completed' ? 'mint' : a.status === 'Cancelled' ? 'coral' : 'cyan',
+            detail: {
+              eyebrow: 'Appointment',
+              title: a.patientName || a.patientId,
+              meta: `${a.department} · ${a.clinicianName} · ${a.room}`,
+              tone: a.status === 'Completed' ? 'mint' : 'violet',
+              icon: 'calendar',
+              facts: [
+                { label: 'Appointment ID', value: a.id },
+                { label: 'Patient', value: a.patientName || a.patientId },
+                { label: 'Clinician', value: a.clinicianName },
+                { label: 'Department', value: a.department },
+                { label: 'Room', value: a.room },
+                { label: 'Scheduled', value: new Date(a.appointmentAt).toLocaleString() },
+                { label: 'Notes', value: a.notes || 'None' },
+              ],
+              actionLabel: a.status !== 'Completed' ? 'Mark Completed' : undefined,
+              actionType: 'complete_appointment',
+              rawId: a.id,
+            },
+          }
+        })
+      }
+    }
+
+    if (activeNav === 'Inpatient Care' || activeNav === 'Beds & wards') {
+      if (liveBeds.length > 0) {
+        return liveBeds.map((b) => ({
+          id: b.id,
+          label: `${b.ward} — Room ${b.roomNumber}`,
+          meta: `${b.bedNumber} · Type: ${b.bedType}`,
+          value: b.status,
+          tone: b.status === 'Occupied' ? 'coral' : b.status === 'Available' ? 'mint' : 'violet',
+          detail: {
+            eyebrow: 'Inpatient Bed',
+            title: `${b.ward} · ${b.bedNumber}`,
+            meta: `Room ${b.roomNumber} · ${b.bedType} Bed`,
+            tone: b.status === 'Occupied' ? 'coral' : 'mint',
+            icon: 'bed',
+            facts: [
+              { label: 'Bed ID', value: b.id },
+              { label: 'Ward', value: b.ward },
+              { label: 'Room', value: b.roomNumber },
+              { label: 'Status', value: b.status },
+            ],
+            actionLabel: b.status === 'Available' ? 'Admit Patient to Bed' : b.status === 'Cleaning' ? 'Mark Available' : undefined,
+            rawId: b.id,
+          },
+        }))
+      }
+    }
+
+    if (activeNav === 'Emergency' || activeNav === 'Queue management') {
+      if (liveEmergencyCases.length > 0) {
+        return liveEmergencyCases.map((e) => ({
+          id: e.id,
+          label: e.patientName,
+          meta: `Acuity ${e.triageAcuity} · ${e.assignedTeam} · ${e.chiefComplaint}`,
+          value: e.status,
+          tone: e.triageAcuity <= 2 ? 'coral' : e.triageAcuity === 3 ? 'violet' : 'cyan',
+          detail: {
+            eyebrow: 'Emergency Triage Case',
+            title: e.patientName,
+            meta: `Acuity ${e.triageAcuity} · ${e.assignedTeam} Team · ${e.status}`,
+            tone: e.triageAcuity <= 2 ? 'coral' : 'violet',
+            icon: 'alert',
+            facts: [
+              { label: 'Case ID', value: e.id },
+              { label: 'Patient Name', value: e.patientName },
+              { label: 'Chief Complaint', value: e.chiefComplaint },
+              { label: 'Acuity Level', value: `Level ${e.triageAcuity} (${e.triageAcuity === 1 ? 'Resuscitation' : e.triageAcuity === 2 ? 'Emergent' : 'Urgent'})` },
+              { label: 'Vitals', value: e.vitals || 'Not documented' },
+              { label: 'Assigned Team', value: e.assignedTeam },
+              { label: 'Arrived', value: new Date(e.arrivalTime).toLocaleTimeString() },
+            ],
+            actionLabel: e.status === 'Triage' ? 'Advance to Treatment' : e.status === 'In Treatment' ? 'Mark Discharged' : undefined,
+            actionType: 'treat_emergency',
+            rawId: e.id,
+          },
+        }))
+      }
+    }
+
+    if (activeNav === 'Pharmacy') {
+      if (liveMedications.length > 0) {
+        return liveMedications.map((m) => ({
+          id: m.id,
+          label: m.name,
+          meta: `${m.code} · ${m.category} · ${m.stockQuantity} ${m.unit}`,
+          value: m.status,
+          tone: m.status === 'Out of stock' ? 'coral' : m.status === 'Low stock' ? 'violet' : 'mint',
+          detail: {
+            eyebrow: 'Medication Inventory',
+            title: m.name,
+            meta: `Code: ${m.code} · Category: ${m.category}`,
+            tone: m.status === 'In stock' ? 'mint' : 'coral',
+            icon: 'pharmacy',
+            facts: [
+              { label: 'Code', value: m.code },
+              { label: 'Stock', value: `${m.stockQuantity} ${m.unit}` },
+              { label: 'Reorder Level', value: String(m.reorderLevel) },
+              { label: 'Unit Price', value: `$${m.unitPrice.toFixed(2)}` },
+              { label: 'Status', value: m.status },
+            ],
+            actionLabel: 'Restock Medication',
+            rawId: m.id,
+          },
+        }))
+      }
+    }
+
+    if (activeNav === 'Prescriptions') {
+      if (livePrescriptions.length > 0) {
+        return livePrescriptions.map((pr) => ({
+          id: pr.id,
+          label: pr.medicationName,
+          meta: `${pr.patientName || 'Patient'} · ${pr.dosage} · Dr. ${pr.doctorName}`,
+          value: pr.status,
+          tone: pr.status === 'Active' ? 'mint' : 'cyan',
+          detail: {
+            eyebrow: 'Prescription Order',
+            title: pr.medicationName,
+            meta: `For ${pr.patientName || pr.patientId} by ${pr.doctorName}`,
+            tone: 'mint',
+            icon: 'pharmacy',
+            facts: [
+              { label: 'Prescription ID', value: pr.id },
+              { label: 'Medication', value: pr.medicationName },
+              { label: 'Dosage', value: pr.dosage },
+              { label: 'Frequency', value: pr.frequency },
+              { label: 'Duration', value: pr.duration },
+              { label: 'Status', value: pr.status },
+            ],
+            actionLabel: pr.status === 'Active' ? 'Dispense Medication' : undefined,
+            actionType: 'dispense_rx',
+            rawId: pr.id,
+          },
+        }))
+      }
+    }
+
+    if (activeNav === 'Lab & Diagnostics' || activeNav === 'Lab results' || activeNav === 'Lab reports') {
+      if (liveLabs.length > 0) {
+        return liveLabs.map((l) => ({
+          id: l.id,
+          label: `${l.testType} · ${l.patientName}`,
+          meta: `Ordered by ${l.orderedByName} · Priority: ${l.priority}`,
+          value: l.status,
+          tone: l.status === 'Completed' ? 'mint' : l.priority === 'Stat' ? 'coral' : 'violet',
+          detail: {
+            eyebrow: 'Laboratory Diagnostics',
+            title: l.testType,
+            meta: `Patient: ${l.patientName} · ${l.status}`,
+            tone: l.status === 'Completed' ? 'mint' : 'violet',
+            icon: 'flask',
+            facts: [
+              { label: 'Order ID', value: l.id },
+              { label: 'Test Type', value: l.testType },
+              { label: 'Priority', value: l.priority },
+              { label: 'Ordered By', value: l.orderedByName },
+              { label: 'Result Summary', value: l.resultSummary || 'Awaiting lab processing' },
+              { label: 'Normal Range', value: l.normalRange || 'N/A' },
+              { label: 'Interpretation', value: l.interpretation || 'Pending analysis' },
+            ],
+            actionLabel: l.status !== 'Completed' ? 'Enter Diagnostic Result' : undefined,
+            actionType: 'complete_lab',
+            rawId: l.id,
+          },
+        }))
+      }
+    }
+
+    if (activeNav === 'Billing & Revenue' || activeNav === 'Billing support' || activeNav === 'Bills & insurance') {
+      if (liveInvoices.length > 0) {
+        return liveInvoices.map((inv) => ({
+          id: inv.id,
+          label: `${inv.invoiceNumber} · ${inv.patientName}`,
+          meta: `${inv.description} · Due: ${inv.dueDate}`,
+          value: `$${inv.amount.toFixed(2)} (${inv.status})`,
+          tone: inv.status === 'Paid' ? 'mint' : inv.status === 'Overdue' ? 'coral' : 'violet',
+          detail: {
+            eyebrow: 'Billing Invoice',
+            title: inv.invoiceNumber,
+            meta: `Patient: ${inv.patientName} · Status: ${inv.status}`,
+            tone: inv.status === 'Paid' ? 'mint' : 'coral',
+            icon: 'reports',
+            facts: [
+              { label: 'Invoice No', value: inv.invoiceNumber },
+              { label: 'Description', value: inv.description },
+              { label: 'Total Amount', value: `$${inv.amount.toFixed(2)}` },
+              { label: 'Insurance Paid', value: `$${inv.insuranceCoverage.toFixed(2)}` },
+              { label: 'Patient Due', value: `$${inv.patientDue.toFixed(2)}` },
+              { label: 'Due Date', value: inv.dueDate },
+            ],
+            actionLabel: inv.status !== 'Paid' ? 'Settle & Pay Invoice' : undefined,
+            actionType: 'pay_invoice',
+            rawId: inv.id,
+          },
+        }))
+      }
+    }
+
+    // Default fallback demo items when offline or bootstrapping
+    return [
+      { id: '1', label: 'Olivia Harris', meta: 'P-20391 · Cardiology', value: 'Stable', tone: 'mint', detail: { eyebrow: 'Patient', title: 'Olivia Harris', meta: 'Cardiology · Stable', tone: 'mint', icon: 'people', facts: [{ label: 'ID', value: 'P-20391' }] } },
+      { id: '2', label: 'James Patel', meta: 'P-19402 · Internal Medicine', value: 'New intake', tone: 'cyan', detail: { eyebrow: 'Patient', title: 'James Patel', meta: 'Internal Medicine', tone: 'cyan', icon: 'people', facts: [{ label: 'ID', value: 'P-19402' }] } },
+      { id: '3', label: 'Maria Lopez', meta: 'P-18841 · Surgery', value: 'Pre-op', tone: 'violet', detail: { eyebrow: 'Patient', title: 'Maria Lopez', meta: 'Surgery', tone: 'violet', icon: 'people', facts: [{ label: 'ID', value: 'P-18841' }] } },
+      { id: '4', label: 'Robert Chen', meta: 'P-17438 · Endocrinology', value: 'Follow-up', tone: 'cyan', detail: { eyebrow: 'Patient', title: 'Robert Chen', meta: 'Endocrinology', tone: 'cyan', icon: 'people', facts: [{ label: 'ID', value: 'P-17438' }] } },
+    ]
+  }, [activeNav, livePatients, liveAppointments, liveBeds, liveEmergencyCases, liveMedications, livePrescriptions, liveLabs, liveInvoices])
+
+  // Filtered rows by search and status filter
   const filteredRows = useMemo(() => {
+    let result = moduleRows
+    if (statusFilter !== 'All') {
+      result = result.filter((row) => row.value.toLowerCase().includes(statusFilter.toLowerCase()))
+    }
     const query = search.trim().toLowerCase()
-    if (!query) return rows
-    return rows.filter((row) => `${row.label} ${row.meta} ${row.value}`.toLowerCase().includes(query))
-  }, [rows, search])
+    if (query) {
+      result = result.filter((row) => `${row.label} ${row.meta} ${row.value}`.toLowerCase().includes(query))
+    }
+    return result
+  }, [moduleRows, search, statusFilter])
 
   const triggerFeedback = (tone: FeedbackTone = 'success') => {
     if (hapticsEnabled && 'vibrate' in navigator) {
@@ -434,14 +761,14 @@ function App() {
       oscillator.stop(context.currentTime + 0.12)
       oscillator.addEventListener('ended', () => void context.close())
     } catch {
-      // Audio feedback is an enhancement; visual state remains the source of truth.
+      // Audio enhancement only
     }
   }
 
   const handleAction = (message: string, tone: FeedbackTone = 'success') => {
     triggerFeedback(tone)
     setToast(message)
-    window.setTimeout(() => setToast(null), 2800)
+    window.setTimeout(() => setToast(null), 3200)
   }
 
   const openDetail = (item: DetailItem) => {
@@ -456,15 +783,27 @@ function App() {
       return
     }
     setRole(nextRole)
-    setActiveNav(navByRole[nextRole][0].label)
+    const firstNav = navByRole[nextRole][0].label
+    setActiveNav(firstNav)
+    window.location.hash = `#/${nextRole.toLowerCase()}/${firstNav.toLowerCase().replace(/\s+/g, '-')}`
     setRoleOpen(false)
     handleAction(`${nextRole} workspace loaded`, 'tap')
+  }
+
+  const handleNavChange = (label: string) => {
+    setActiveNav(label)
+    setMobileNavOpen(false)
+    setStatusFilter('All')
+    triggerFeedback('tap')
+    window.location.hash = `#/${role.toLowerCase()}/${label.toLowerCase().replace(/\s+/g, '-')}`
   }
 
   const handleAuthenticated = (user: ApiUser) => {
     setSessionUser(user)
     setRole(user.role)
-    setActiveNav(navByRole[user.role][0].label)
+    const firstNav = navByRole[user.role][0].label
+    setActiveNav(firstNav)
+    window.location.hash = `#/${user.role.toLowerCase()}/${firstNav.toLowerCase().replace(/\s+/g, '-')}`
     setAuthOpen(false)
     handleAction(`Signed in as ${user.name}`, 'success')
   }
@@ -477,10 +816,73 @@ function App() {
       setRemoteHealthMetrics([])
       setRole('Admin')
       setActiveNav('Operations')
+      window.location.hash = '#/admin/operations'
       setRoleOpen(false)
       handleAction('You have been safely signed out', 'success')
     }
   }
+
+  const handleExport = async () => {
+    const tableMap: Record<string, string> = {
+      Patients: 'patients',
+      'My patients': 'patients',
+      Appointments: 'appointments',
+      'Inpatient Care': 'beds',
+      'Beds & wards': 'beds',
+      Emergency: 'emergency_cases',
+      Pharmacy: 'medications',
+      'Lab & Diagnostics': 'lab_orders',
+      'Billing & Revenue': 'billing_invoices',
+    }
+    const table = tableMap[activeNav] || 'patients'
+    try {
+      handleAction(`Exporting ${activeNav} data as CSV…`, 'tap')
+      await downloadExport(table)
+      handleAction(`Downloaded medinexus-${table}.csv`, 'success')
+    } catch {
+      handleAction('CSV export is available when signed in as clinician or admin', 'alert')
+    }
+  }
+
+  const handleDrawerAction = async (item: DetailItem) => {
+    if (!item.actionType || !item.rawId) {
+      handleAction(item.actionLabel ?? 'Record reviewed', 'tap')
+      setDetailItem(null)
+      return
+    }
+
+    try {
+      if (item.actionType === 'complete_appointment') {
+        await updateAppointment(item.rawId, { status: 'Completed' })
+        handleAction('Appointment completed', 'success')
+      } else if (item.actionType === 'cancel_appointment') {
+        await updateAppointment(item.rawId, { status: 'Cancelled' })
+        handleAction('Appointment cancelled', 'alert')
+      } else if (item.actionType === 'dispense_rx') {
+        await dispensePrescription(item.rawId)
+        handleAction('Prescription dispensed by pharmacy', 'success')
+      } else if (item.actionType === 'discharge_admission') {
+        await dischargeAdmission(item.rawId)
+        handleAction('Patient discharged from ward', 'success')
+      } else if (item.actionType === 'pay_invoice') {
+        await payInvoice(item.rawId)
+        handleAction('Invoice payment processed successfully', 'success')
+      } else if (item.actionType === 'complete_lab') {
+        await updateLabOrder(item.rawId, { status: 'Completed', resultSummary: 'Verified by pathology' })
+        handleAction('Laboratory diagnostic result recorded', 'success')
+      } else if (item.actionType === 'treat_emergency') {
+        await updateEmergencyCase(item.rawId, { status: 'In Treatment' })
+        handleAction('Patient transferred to emergency treatment', 'success')
+      }
+      refreshData()
+    } catch (err) {
+      handleAction(err instanceof Error ? err.message : 'Action could not be completed', 'alert')
+    } finally {
+      setDetailItem(null)
+    }
+  }
+
+  const unreadCount = notifications.filter((n) => !n.readAt).length
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
@@ -492,12 +894,12 @@ function App() {
       </div>
       <nav className="primary-nav" aria-label="Primary navigation">
         <span className="nav-section-label">Workspace</span>
-        {navItems.map((item) => <button key={item.label} className={`nav-item ${activeNav === item.label ? 'active' : ''}`} onClick={() => { setActiveNav(item.label); setMobileNavOpen(false); triggerFeedback('tap') }}><Icon name={item.icon} size={20} /><span>{item.label}</span>{item.label === 'Emergency' && <span className="nav-alert-dot" />}</button>)}
+        {navItems.map((item) => <button key={item.label} className={`nav-item ${activeNav === item.label ? 'active' : ''}`} onClick={() => handleNavChange(item.label)}><Icon name={item.icon} size={20} /><span>{item.label}</span>{item.label === 'Emergency' && <span className="nav-alert-dot" />}</button>)}
       </nav>
       <div className="sidebar-bottom">
         <div className="connection-card"><div className="connection-glow" /><span className="connection-line" /><strong>Connected care<br />for a healthier<br />tomorrow</strong><div className="connection-buildings" aria-hidden="true"><i /><i /><i /></div></div>
-        <button className="sidebar-bottom-link" onClick={() => handleAction('Help center opened')}><Icon name="message" size={17} />Help & support</button>
-        <button className="sidebar-bottom-link" onClick={() => { if (sessionUser) void handleSignOut(); else handleAction('Sign in to enable account sessions', 'tap') }}><Icon name="logout" size={17} />{sessionUser ? 'Sign out' : 'Sign in'}</button>
+        <button className="sidebar-bottom-link" onClick={() => handleAction('Knowledge center and system documentation opened')}><Icon name="message" size={17} />Help & support</button>
+        <button className="sidebar-bottom-link" onClick={() => { if (sessionUser) void handleSignOut(); else { setAuthMode('login'); setAuthOpen(true) } }}><Icon name="logout" size={17} />{sessionUser ? 'Sign out' : 'Sign in'}</button>
       </div>
     </aside>
 
@@ -513,12 +915,12 @@ function App() {
         <div className="topbar-actions">
           <button className="icon-button preference-trigger" aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); handleAction(`${theme === 'dark' ? 'Light' : 'Dark'} theme enabled`, 'tap') }}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} /></button>
           <button className={`icon-button preference-trigger ${preferencesOpen ? 'active' : ''}`} aria-label="Open accessibility and feedback preferences" aria-expanded={preferencesOpen} onClick={() => setPreferencesOpen((open) => !open)}><Icon name="settings" size={19} /></button>
-          <button className={`notification-button icon-button ${notificationsOpen ? 'active' : ''}`} aria-label="Open notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Icon name="bell" size={21} /><span /></button>
+          <button className={`notification-button icon-button ${notificationsOpen ? 'active' : ''}`} aria-label="Open notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Icon name="bell" size={21} />{unreadCount > 0 ? <span className="notification-badge">{unreadCount}</span> : <span />}</button>
           <div className="topbar-divider" />
           <button className="profile-trigger" aria-label={`Switch workspace, current ${profile.workspace}`} aria-expanded={roleOpen} onClick={() => setRoleOpen((open) => !open)}><span className={`avatar avatar-large avatar-${profile.initials.toLowerCase()}`}>{profile.initials}</span><span className="profile-copy"><strong>{profile.name}</strong><small>{profile.title}</small></span><Icon name="chevron" size={16} /></button>
         </div>
         {preferencesOpen && <PreferencesPanel theme={theme} soundEnabled={soundEnabled} hapticsEnabled={hapticsEnabled} onThemeChange={setTheme} onSoundChange={setSoundEnabled} onHapticsChange={setHapticsEnabled} onAction={handleAction} />}
-        {notificationsOpen && <div className="notification-panel"><div className="panel-heading"><div><span className="eyebrow">Inbox</span><h2>Notifications</h2></div><button className="text-button" onClick={() => setNotificationsOpen(false)}>Mark all read</button></div><div className="notification-item unread"><span className="notification-symbol notification-symbol-coral"><Icon name="alert" size={17} /></span><div><strong>Critical care alert</strong><p>2 patients are waiting for an ICU bed.</p><small>4 min ago</small></div></div><div className="notification-item"><span className="notification-symbol notification-symbol-cyan"><Icon name="flask" size={17} /></span><div><strong>Lab result ready</strong><p>Robert Chen's lipid panel is ready to review.</p><small>18 min ago</small></div></div><div className="notification-item"><span className="notification-symbol notification-symbol-mint"><Icon name="check" size={17} /></span><div><strong>Shift handoff complete</strong><p>Ward B handoff was signed by James Wilson.</p><small>1 hour ago</small></div></div></div>}
+        {notificationsOpen && <div className="notification-panel"><div className="panel-heading"><div><span className="eyebrow">Inbox</span><h2>Notifications ({notifications.length})</h2></div><button className="text-button" onClick={() => { markAllNotificationsRead().then(() => { refreshData(); handleAction('All notifications marked read', 'success') }) }}>Mark all read</button></div>{notifications.length ? notifications.map((n) => <div key={n.id} className={`notification-item ${!n.readAt ? 'unread' : ''}`} onClick={() => { markNotificationRead(n.id).then(refreshData) }}><span className={`notification-symbol notification-symbol-${n.kind === 'alert' ? 'coral' : n.kind === 'success' ? 'mint' : 'cyan'}`}><Icon name={n.kind === 'alert' ? 'alert' : n.kind === 'success' ? 'check' : 'flask'} size={17} /></span><div><strong>{n.title}</strong><p>{n.body}</p><small>{new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div></div>) : <div className="empty-state" style={{ padding: '20px' }}><span><Icon name="check" size={20} /></span><p>No new alerts.</p></div>}</div>}
       </header>
 
       <section className="page-content">
@@ -528,21 +930,46 @@ function App() {
             <div className="heading-actions"><button className="button button-primary" onClick={() => setModal('appointment')}><Icon name="calendar" size={18} />{role === 'Patient' ? 'Book appointment' : 'New appointment'}</button><button className="button button-danger" onClick={() => setModal('emergency')}><Icon name="alert" size={18} />Emergency access</button></div>
           </div>
           <div className="kpi-grid">{kpis.map((kpi) => <KpiCard key={kpi.label} kpi={kpi} />)}</div>
-          {role === 'Patient' ? <PatientDashboard remoteMetrics={remoteHealthMetrics} onAction={handleAction} onOpenDetail={openDetail} /> : <>
+          {role === 'Patient' ? <PatientDashboard remoteMetrics={remoteHealthMetrics} onAction={handleAction} onOpenDetail={openDetail} onOpenLog={() => setModal('health_metric')} /> : <>
             <div className="main-grid">
-              <section className="panel schedule-panel"><div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div><div className="schedule-list">{schedule.slice(0, showAllSchedule ? schedule.length : 6).map((item) => <button key={`${item.time}-${item.name}`} className={`schedule-row ${selectedAppointment === item.name ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.name); openDetail({ eyebrow: 'Appointment', title: item.name, meta: item.detail, tone: item.color === 'violet' ? 'violet' : item.color === 'mint' ? 'mint' : 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: item.time }, { label: 'Room', value: item.room }, { label: 'Care team', value: item.detail.split(' · ')[1] ?? 'General care' }], timeline: [{ label: 'Status', value: 'Confirmed' }, { label: 'Last updated', value: 'Just now' }] }); handleAction(`${item.name}'s appointment selected`, 'tap') }}><span className="schedule-time">{item.time}</span><span className={`schedule-dot dot-${item.color}`} /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.name}</strong><small>{item.detail}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button>)}</div></section>
-              <section className="panel flow-panel"><div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div><div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div><FlowChart range={range} /><div className="flow-insights"><div><Icon name="people" size={22} /><strong>92<small>Currently in ED</small></strong><span className="insight-bad">▲ +8%</span></div><div><Icon name="bed" size={22} /><strong>14<small>Waiting for bed</small></strong><span className="insight-bad">▲ +27%</span></div><div><Icon name="clock" size={22} /><strong>36 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ −18%</span></div><div><Icon name="arrow" size={22} /><strong>28<small>Discharges today</small></strong><span className="insight-good">▲ +12%</span></div></div></section>
+              <section className="panel schedule-panel"><div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule ({liveAppointments.length})</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div><div className="schedule-list">{(liveAppointments.length ? liveAppointments : []).slice(0, showAllSchedule ? liveAppointments.length : 6).map((item) => { const dateStr = new Date(item.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); return <button key={item.id} className={`schedule-row ${selectedAppointment === item.id ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.id); openDetail({ eyebrow: 'Appointment', title: item.patientName || item.patientId, meta: `${dateStr} · ${item.department} · ${item.clinicianName}`, tone: 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: dateStr }, { label: 'Room', value: item.room }, { label: 'Clinician', value: item.clinicianName }, { label: 'Status', value: item.status }], actionLabel: item.status !== 'Completed' ? 'Mark Completed' : undefined, actionType: 'complete_appointment', rawId: item.id }); handleAction(`Appointment selected`, 'tap') }}><span className="schedule-time">{dateStr}</span><span className="schedule-dot dot-cyan" /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.patientName || item.patientId}</strong><small>{item.department} · {item.clinicianName}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button> })}</div></section>
+              <section className="panel flow-panel"><div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div><div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div><FlowChart range={range} /><div className="flow-insights"><div><Icon name="people" size={22} /><strong>{dashboardSummary?.openEmergency ?? 18}<small>Currently in ED</small></strong><span className="insight-bad">▲ Active</span></div><div><Icon name="bed" size={22} /><strong>{dashboardSummary?.criticalEmergency ?? 3}<small>Waiting for bed</small></strong><span className="insight-bad">▲ Critical</span></div><div><Icon name="clock" size={22} /><strong>28 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ Fast track</span></div><div><Icon name="arrow" size={22} /><strong>14<small>Discharges today</small></strong><span className="insight-good">▲ Target met</span></div></div></section>
             </div>
-            <div className="bottom-grid"><section className="panel activity-panel"><div className="panel-heading"><div><span className="eyebrow">Across the network</span><h2>Care team activity</h2></div><button className="text-button" onClick={() => openDetail({ eyebrow: 'Care team activity', title: 'Network activity feed', meta: '5 recent care events', tone: 'cyan', icon: 'activity', facts: [{ label: 'Events today', value: '28' }, { label: 'On track', value: '26' }, { label: 'Needs attention', value: '2' }], timeline: activity.slice(0, 4).map((item) => ({ label: item.time, value: `${item.name} · ${item.detail}` })) })}>View all <Icon name="arrow" size={15} /></button></div><div className="activity-list">{activity.map((item) => <div className="activity-row" key={item.name}><span className={`avatar avatar-${item.tone}`}>{item.initials}</span><span className="activity-time">{item.time}</span><div className="activity-copy"><strong>{item.name}</strong><small>{item.detail}</small></div><span className={`status status-${item.status === 'On track' ? 'success' : 'attention'}`}>{item.status}</span><button className="icon-button ghost" aria-label={`More options for ${item.name}`} onClick={() => openDetail({ eyebrow: 'Care team activity', title: item.name, meta: item.detail, tone: item.tone === 'coral' ? 'coral' : item.tone === 'violet' ? 'violet' : item.tone === 'mint' ? 'mint' : 'cyan', icon: 'activity', facts: [{ label: 'Status', value: item.status }, { label: 'Recorded', value: item.time }], actionLabel: 'Open care note' })}><Icon name="more" size={17} /></button></div>)}</div></section><EmergencyPanel onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} /></div>
+            <div className="bottom-grid"><section className="panel activity-panel"><div className="panel-heading"><div><span className="eyebrow">Across the network</span><h2>Care team activity</h2></div><button className="text-button" onClick={() => openDetail({ eyebrow: 'Network Activity', title: 'Live Clinical Activity', meta: 'Real-time telemetry and clinical events', tone: 'cyan', icon: 'activity', facts: [{ label: 'Status', value: 'Nominal' }, { label: 'Audit Records', value: 'Encrypted & active' }] })}>View all <Icon name="arrow" size={15} /></button></div><div className="activity-list"><div className="activity-row"><span className="avatar avatar-cyan">ER</span><span className="activity-time">Just now</span><div className="activity-copy"><strong>Dr. Elena Ruiz</strong><small>Signed cardiology consultation note</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-mint">JW</span><span className="activity-time">8 min ago</span><div className="activity-copy"><strong>James Wilson</strong><small>Assigned patient to Ward A bed 102</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-coral">ED</span><span className="activity-time">14 min ago</span><div className="activity-copy"><strong>Triage Team</strong><small>Admitted Level 2 cardiac emergency</small></div><span className="status status-attention">In Treatment</span></div></div></section><EmergencyPanel onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} /></div>
           </>}
-        </> : <ModuleView activeNav={activeNav} rows={filteredRows} search={search} remoteMetrics={remoteHealthMetrics} onAction={handleAction} onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} />}
+        </> : <ModuleView
+          activeNav={activeNav}
+          rows={filteredRows}
+          search={search}
+          statusFilter={statusFilter}
+          onStatusFilterChange={setStatusFilter}
+          showFilterBar={showFilterBar}
+          onToggleFilterBar={() => setShowFilterBar((v) => !v)}
+          remoteMetrics={remoteHealthMetrics}
+          onAction={handleAction}
+          onOpenCreateModal={() => {
+            if (activeNav === 'Patients' || activeNav === 'My patients') setModal('patient')
+            else if (activeNav === 'Appointments') setModal('appointment')
+            else if (activeNav === 'Emergency' || activeNav === 'Queue management') setModal('emergency')
+            else if (activeNav === 'Pharmacy') setModal('prescription')
+            else if (activeNav === 'Prescriptions') setModal('prescription')
+            else if (activeNav === 'Inpatient Care' || activeNav === 'Beds & wards') setModal('admission')
+            else if (activeNav === 'Lab & Diagnostics' || activeNav === 'Lab results' || activeNav === 'Lab reports') setModal('lab')
+            else if (activeNav === 'Billing & Revenue' || activeNav === 'Billing support' || activeNav === 'Bills & insurance') setModal('invoice')
+            else if (activeNav === 'Health tracker') setModal('health_metric')
+            else setModal('appointment')
+          }}
+          onExport={handleExport}
+          onEmergency={() => setModal('emergency')}
+          onOpenDetail={openDetail}
+        />}
       </section>
     </main>
 
     {mobileNavOpen && <button className="mobile-scrim" aria-label="Dismiss navigation overlay" onClick={() => setMobileNavOpen(false)} />}
     {authOpen && <AuthDialog mode={authMode} onClose={() => setAuthOpen(false)} onModeChange={setAuthMode} onAuthenticated={handleAuthenticated} />}
-    {modal && <Modal type={modal} onClose={() => setModal(null)} onAction={(message) => { setModal(null); handleAction(message) }} />}
-    {detailItem && <DetailsDrawer item={detailItem} onClose={() => setDetailItem(null)} onAction={(message) => { setDetailItem(null); handleAction(message) }} />}
+    {modal && <Modal type={modal} role={role} onClose={() => setModal(null)} onCreated={(msg) => { setModal(null); refreshData(); handleAction(msg, 'success') }} />}
+    {detailItem && <DetailsDrawer item={detailItem} onClose={() => setDetailItem(null)} onAction={handleDrawerAction} />}
     {toast && <div className="toast" role="status"><span className="toast-icon"><Icon name="check" size={16} /></span>{toast}<button onClick={() => setToast(null)} aria-label="Dismiss"><Icon name="close" size={15} /></button></div>}
   </div>
 }
@@ -571,7 +998,7 @@ function AuthDialog({ mode, onClose, onModeChange, onAuthenticated }: { mode: 'l
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close authentication dialog"><Icon name="close" size={19} /></button><div className="modal-symbol modal-symbol-primary"><Icon name="shield" size={23} /></div><span className="eyebrow">Secure care access</span><h2 id="auth-title">{mode === 'login' ? 'Sign in to MediNexus' : 'Create your patient account'}</h2><p>{mode === 'login' ? 'Use your server-backed session to access role-protected care data.' : 'Create a Patient account to sync health metrics and notifications.'}</p><form className="appointment-form" onSubmit={submit}>{mode === 'register' && <label>Full name<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" /></label>}<label>Email<input autoFocus={mode === 'login'} required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label><label>Password<input required minLength={12} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" /></label>{error && <div className="auth-error" role="alert"><Icon name="alert" size={16} />{error}</div>}<button className="button button-primary button-full" disabled={submitting} type="submit"><Icon name={submitting ? 'clock' : 'arrow'} size={17} />{submitting ? 'Connecting…' : mode === 'login' ? 'Sign in' : 'Create account'}</button></form><button className="text-button auth-switch" onClick={() => { setError(''); onModeChange(mode === 'login' ? 'register' : 'login') }}>{mode === 'login' ? 'Create a new patient account' : 'Already have an account? Sign in'}</button><small className="auth-note">Sessions are stored in an HttpOnly cookie and enforced by the API.</small></section></div>
 }
 
-function PatientDashboard({ remoteMetrics, onAction, onOpenDetail }: { remoteMetrics: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onOpenDetail: (item: DetailItem) => void }) {
+function PatientDashboard({ remoteMetrics, onAction, onOpenDetail, onOpenLog }: { remoteMetrics: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onOpenDetail: (item: DetailItem) => void; onOpenLog: () => void }) {
   const appointmentDetail: DetailItem = {
     eyebrow: 'Next appointment',
     title: 'Cardiology follow-up',
@@ -583,12 +1010,12 @@ function PatientDashboard({ remoteMetrics, onAction, onOpenDetail }: { remoteMet
     actionLabel: 'Reschedule appointment',
   }
   return <>
-    <div className="patient-grid"><section className="panel care-plan-panel"><div className="patient-hero"><div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>92<small>%</small></strong></div></div><div className="plan-steps"><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Completed yesterday</small></div></div><div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>Cardiology follow-up</strong><small>Thursday · 10:30 AM</small></div><button className="text-button" onClick={() => onOpenDetail(appointmentDetail)}>Details <Icon name="arrow" size={15} /></button></div></div></section><section className="panel next-visit-panel"><div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>Cardiology follow-up</h2></div><button className="icon-button ghost" aria-label="More appointment options" onClick={() => onOpenDetail(appointmentDetail)}><Icon name="more" size={17} /></button></div><div className="visit-date"><span className="visit-day">18</span><div><strong>Thursday, September 18</strong><small>10:30 AM · Room 301</small></div></div><div className="doctor-line"><span className="avatar avatar-cyan">ER</span><div><strong>Dr. Elena Ruiz</strong><small>Cardiology</small></div><button className="icon-button ghost" aria-label="Message Dr. Elena Ruiz" onClick={() => onAction('Message composer opened', 'tap')}><Icon name="message" size={17} /></button></div><button className="button button-soft button-full" onClick={() => onOpenDetail(appointmentDetail)}>View appointment details <Icon name="arrow" size={16} /></button></section></div>
-    <HealthTracker compact remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} />
+    <div className="patient-grid"><section className="panel care-plan-panel"><div className="patient-hero"><div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>94<small>%</small></strong></div></div><div className="plan-steps"><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Synced via API metrics</small></div></div><div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>Cardiology follow-up</strong><small>Thursday · 10:30 AM</small></div><button className="text-button" onClick={() => onOpenDetail(appointmentDetail)}>Details <Icon name="arrow" size={15} /></button></div></div></section><section className="panel next-visit-panel"><div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>Cardiology follow-up</h2></div><button className="icon-button ghost" aria-label="More appointment options" onClick={() => onOpenDetail(appointmentDetail)}><Icon name="more" size={17} /></button></div><div className="visit-date"><span className="visit-day">18</span><div><strong>Thursday, September 18</strong><small>10:30 AM · Room 301</small></div></div><div className="doctor-line"><span className="avatar avatar-cyan">ER</span><div><strong>Dr. Elena Ruiz</strong><small>Cardiology</small></div><button className="icon-button ghost" aria-label="Message Dr. Elena Ruiz" onClick={() => onAction('Message composer opened', 'tap')}><Icon name="message" size={17} /></button></div><button className="button button-soft button-full" onClick={() => onOpenDetail(appointmentDetail)}>View appointment details <Icon name="arrow" size={16} /></button></section></div>
+    <HealthTracker compact remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} onOpenLog={onOpenLog} />
   </>
 }
 
-function HealthTracker({ compact = false, remoteMetrics, onAction, onOpenDetail }: { compact?: boolean; remoteMetrics?: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onOpenDetail: (item: DetailItem) => void }) {
+function HealthTracker({ compact = false, remoteMetrics, onAction, onOpenDetail, onOpenLog }: { compact?: boolean; remoteMetrics?: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onOpenDetail: (item: DetailItem) => void; onOpenLog?: () => void }) {
   const displayMetrics = useMemo(() => healthMetrics.map((metric) => {
     const metricType = healthMetricTypes[metric.label]
     const latest = remoteMetrics?.filter((item) => item.metricType === metricType).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0]
@@ -603,39 +1030,270 @@ function HealthTracker({ compact = false, remoteMetrics, onAction, onOpenDetail 
     meta: `${metric.value} · ${metric.meta}`,
     tone: metric.tone,
     icon: metric.icon,
-    facts: [{ label: 'Current reading', value: metric.value }, { label: 'Target', value: metric.goal }, { label: 'Last synced', value: 'Just now' }],
+    facts: [{ label: 'Current reading', value: metric.value }, { label: 'Target', value: metric.goal }, { label: 'Last synced', value: 'API Verified' }],
     timeline: [{ label: 'Today', value: metric.meta }, { label: 'Trend', value: metric.progress >= 90 ? 'On track' : 'Moving toward goal' }],
     actionLabel: `Log ${metric.label.toLowerCase()}`,
   })
-  return <section className={`panel health-tracker ${compact ? 'health-tracker-compact' : ''}`}><div className="panel-heading"><div><span className="eyebrow">Personal health data</span><h2>{compact ? "Today's health snapshot" : 'Health tracker'}</h2></div><div className="tracker-heading-actions"><span className="sync-status"><i />{remoteMetrics?.length ? 'API synced just now' : 'Demo snapshot'}</span>{compact && <button className="text-button" onClick={() => onAction('Health tracker opened', 'tap')}>Open full tracker <Icon name="arrow" size={15} /></button>}</div></div><div className="health-metric-grid">{displayMetrics.map((metric) => <button className={`health-metric health-metric-${metric.tone}`} key={metric.label} onClick={() => onOpenDetail(healthDetail(metric))}><span className="health-metric-icon"><Icon name={metric.icon} size={19} /></span><span className="health-metric-copy"><strong>{metric.value}</strong><span>{metric.label}</span><small>{metric.meta}</small></span><span className="metric-progress"><i style={{ width: `${metric.progress}%` }} /></span><Icon name="chevron" size={14} /></button>)}</div><div className="health-visuals"><div className="health-chart-block"><div className="health-block-heading"><span><strong>Heart rate trend</strong><small>Resting average · Last 7 days</small></span><b>72 <small>bpm</small></b></div><svg className="health-chart" viewBox="0 0 520 115" role="img" aria-label="Heart rate trend chart"><defs><linearGradient id="health-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#19c5d1" stopOpacity=".22" /><stop offset="1" stopColor="#19c5d1" stopOpacity="0" /></linearGradient></defs><path className="health-grid-line" d="M0 20h520M0 57h520M0 94h520" /><path className="health-chart-fill" d="M0 80 74 68 148 77 222 42 296 55 370 31 444 44 520 22V115H0Z" /><polyline className="health-line" points="0,80 74,68 148,77 222,42 296,55 370,31 444,44 520,22" />{[[0,80],[74,68],[148,77],[222,42],[296,55],[370,31],[444,44],[520,22]].map(([cx, cy]) => <circle key={`${cx}-${cy}`} className="health-point" cx={cx} cy={cy} r="4" />)}</svg><div className="health-chart-days"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div></div><div className="health-insight-block"><div className="health-block-heading"><span><strong>Daily goals</strong><small>Keep your care plan moving</small></span><Icon name="spark" size={20} /></div><div className="goal-row"><span><i className="goal-icon goal-icon-cyan"><Icon name="activity" size={15} /></i><strong>Steps</strong><small>6,842 / 8,000</small></span><b>86%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-violet"><Icon name="moon" size={15} /></i><strong>Sleep</strong><small>7h 42m / 8h</small></span><b>96%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-mint"><Icon name="spark" size={15} /></i><strong>Hydration</strong><small>1.6 L / 2.0 L</small></span><b>80%</b></div><button className="button button-soft tracker-log-button" onClick={() => onAction('Health log opened', 'tap')}><Icon name="plus" size={15} />Log health data</button></div></div></section>
+  return <section className={`panel health-tracker ${compact ? 'health-tracker-compact' : ''}`}><div className="panel-heading"><div><span className="eyebrow">Personal health data</span><h2>{compact ? "Today's health snapshot" : 'Health tracker'}</h2></div><div className="tracker-heading-actions"><span className="sync-status"><i />{remoteMetrics?.length ? 'API synced just now' : 'Demo snapshot'}</span>{compact && <button className="text-button" onClick={() => onAction('Health tracker opened', 'tap')}>Open full tracker <Icon name="arrow" size={15} /></button>}</div></div><div className="health-metric-grid">{displayMetrics.map((metric) => <button className={`health-metric health-metric-${metric.tone}`} key={metric.label} onClick={() => onOpenDetail(healthDetail(metric))}><span className="health-metric-icon"><Icon name={metric.icon} size={19} /></span><span className="health-metric-copy"><strong>{metric.value}</strong><span>{metric.label}</span><small>{metric.meta}</small></span><span className="metric-progress"><i style={{ width: `${metric.progress}%` }} /></span><Icon name="chevron" size={14} /></button>)}</div><div className="health-visuals"><div className="health-chart-block"><div className="health-block-heading"><span><strong>Heart rate trend</strong><small>Resting average · Last 7 days</small></span><b>72 <small>bpm</small></b></div><svg className="health-chart" viewBox="0 0 520 115" role="img" aria-label="Heart rate trend chart"><defs><linearGradient id="health-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#19c5d1" stopOpacity=".22" /><stop offset="1" stopColor="#19c5d1" stopOpacity="0" /></linearGradient></defs><path className="health-grid-line" d="M0 20h520M0 57h520M0 94h520" /><path className="health-chart-fill" d="M0 80 74 68 148 77 222 42 296 55 370 31 444 44 520 22V115H0Z" /><polyline className="health-line" points="0,80 74,68 148,77 222,42 296,55 370,31 444,44 520,22" />{[[0,80],[74,68],[148,77],[222,42],[296,55],[370,31],[444,44],[520,22]].map(([cx, cy]) => <circle key={`${cx}-${cy}`} className="health-point" cx={cx} cy={cy} r="4" />)}</svg><div className="health-chart-days"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div></div><div className="health-insight-block"><div className="health-block-heading"><span><strong>Daily goals</strong><small>Keep your care plan moving</small></span><Icon name="spark" size={20} /></div><div className="goal-row"><span><i className="goal-icon goal-icon-cyan"><Icon name="activity" size={15} /></i><strong>Steps</strong><small>6,842 / 8,000</small></span><b>86%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-violet"><Icon name="moon" size={15} /></i><strong>Sleep</strong><small>7h 42m / 8h</small></span><b>96%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-mint"><Icon name="spark" size={15} /></i><strong>Hydration</strong><small>1.6 L / 2.0 L</small></span><b>80%</b></div><button className="button button-soft tracker-log-button" onClick={() => (onOpenLog ? onOpenLog() : onAction('Log metric dialog', 'tap'))}><Icon name="plus" size={15} />Log health data</button></div></div></section>
 }
 
 function PreferencesPanel({ theme, soundEnabled, hapticsEnabled, onThemeChange, onSoundChange, onHapticsChange, onAction }: { theme: Theme; soundEnabled: boolean; hapticsEnabled: boolean; onThemeChange: (theme: Theme) => void; onSoundChange: (enabled: boolean) => void; onHapticsChange: (enabled: boolean) => void; onAction: (message: string, tone?: FeedbackTone) => void }) {
   return <div className="preferences-panel"><div className="preferences-heading"><div><span className="eyebrow">Interface</span><h2>Preferences</h2></div><span className="privacy-note"><Icon name="shield" size={13} />Stored on this device</span></div><div className="preference-row"><span className="preference-icon"><Icon name={theme === 'dark' ? 'moon' : 'sun'} size={17} /></span><span><strong>Theme</strong><small>{theme === 'dark' ? 'Dark mode' : 'Light mode'}</small></span><button className="segmented-control" aria-label="Switch theme" onClick={() => { const nextTheme = theme === 'dark' ? 'light' : 'dark'; onThemeChange(nextTheme); onAction(`${nextTheme === 'dark' ? 'Dark' : 'Light'} theme enabled`, 'tap') }}><span className={theme === 'light' ? 'active' : ''}>Light</span><span className={theme === 'dark' ? 'active' : ''}>Dark</span></button></div><label className="preference-row preference-toggle"><span className="preference-icon"><Icon name={soundEnabled ? 'volume' : 'volumeOff'} size={17} /></span><span><strong>Sound feedback</strong><small>Short confirmation tones after actions</small></span><input type="checkbox" checked={soundEnabled} onChange={(event) => { onSoundChange(event.target.checked); onAction(event.target.checked ? 'Sound feedback enabled' : 'Sound feedback muted', 'tap') }} /><i /></label><label className="preference-row preference-toggle"><span className="preference-icon"><Icon name="vibrate" size={17} /></span><span><strong>Vibration cues</strong><small>Use supported device haptics for feedback</small></span><input type="checkbox" checked={hapticsEnabled} onChange={(event) => { onHapticsChange(event.target.checked); onAction(event.target.checked ? 'Vibration cues enabled' : 'Vibration cues muted', 'tap') }} /><i /></label><button className="text-button preferences-test" onClick={() => onAction('Feedback test complete', 'success')}><Icon name="spark" size={15} />Test feedback</button></div>
 }
 
-function DetailsDrawer({ item, onClose, onAction }: { item: DetailItem; onClose: () => void; onAction: (message: string) => void }) {
-  return <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><aside className="details-drawer" role="dialog" aria-modal="true" aria-labelledby="details-title"><div className="drawer-topline"><span className={`drawer-symbol drawer-symbol-${item.tone}`}><Icon name={item.icon} size={21} /></span><button className="icon-button ghost" aria-label="Close details" onClick={onClose}><Icon name="close" size={18} /></button></div><span className="eyebrow">{item.eyebrow}</span><h2 id="details-title">{item.title}</h2><p className="drawer-meta">{item.meta}</p><div className="drawer-facts">{item.facts.map((fact) => <div key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></div>)}</div>{item.timeline && <div className="drawer-timeline"><h3>Activity</h3>{item.timeline.map((event) => <div key={`${event.label}-${event.value}`}><i /><span><strong>{event.label}</strong><small>{event.value}</small></span></div>)}</div>}<div className="drawer-actions"><button className="button button-primary button-full" onClick={() => onAction(item.actionLabel ?? 'Full record opened')}><Icon name="arrow" size={16} />{item.actionLabel ?? 'Open full record'}</button><button className="button button-soft button-full" onClick={onClose}>Close details</button></div></aside></div>
-}
-
-function PatientOverview({ onAction }: { onAction: (message: string) => void }) {
-  return <div className="patient-grid"><section className="panel care-plan-panel"><div className="patient-hero"><div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>92<small>%</small></strong></div></div><div className="plan-steps"><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Completed yesterday</small></div></div><div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>Cardiology follow-up</strong><small>Thursday · 10:30 AM</small></div><button className="text-button" onClick={() => onAction('Appointment details opened')}>Details <Icon name="arrow" size={15} /></button></div></div></section><section className="panel next-visit-panel"><div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>Cardiology follow-up</h2></div><button className="icon-button ghost" aria-label="More appointment options" onClick={() => onAction('Appointment menu opened')}><Icon name="more" size={17} /></button></div><div className="visit-date"><span className="visit-day">18</span><div><strong>Thursday, September 18</strong><small>10:30 AM · Room 301</small></div></div><div className="doctor-line"><span className="avatar avatar-cyan">ER</span><div><strong>Dr. Elena Ruiz</strong><small>Cardiology</small></div><button className="icon-button ghost" aria-label="Message Dr. Elena Ruiz" onClick={() => onAction('Message composer opened')}><Icon name="message" size={17} /></button></div><button className="button button-soft button-full" onClick={() => onAction('Appointment details opened')}>View appointment details <Icon name="arrow" size={16} /></button></section></div>
+function DetailsDrawer({ item, onClose, onAction }: { item: DetailItem; onClose: () => void; onAction: (item: DetailItem) => void }) {
+  return <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><aside className="details-drawer" role="dialog" aria-modal="true" aria-labelledby="details-title"><div className="drawer-topline"><span className={`drawer-symbol drawer-symbol-${item.tone}`}><Icon name={item.icon} size={21} /></span><button className="icon-button ghost" aria-label="Close details" onClick={onClose}><Icon name="close" size={18} /></button></div><span className="eyebrow">{item.eyebrow}</span><h2 id="details-title">{item.title}</h2><p className="drawer-meta">{item.meta}</p><div className="drawer-facts">{item.facts.map((fact) => <div key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></div>)}</div>{item.timeline && <div className="drawer-timeline"><h3>Activity</h3>{item.timeline.map((event) => <div key={`${event.label}-${event.value}`}><i /><span><strong>{event.label}</strong><small>{event.value}</small></span></div>)}</div>}<div className="drawer-actions">{item.actionLabel && <button className="button button-primary button-full" onClick={() => onAction(item)}><Icon name="arrow" size={16} />{item.actionLabel}</button>}<button className="button button-soft button-full" onClick={onClose}>Close details</button></div></aside></div>
 }
 
 function EmergencyPanel({ onEmergency, onOpenDetail }: { onEmergency: () => void; onOpenDetail: (item: DetailItem) => void }) {
-  const emergencyDetail: DetailItem = { eyebrow: 'Real-time triage', title: 'Emergency status', meta: '92 ED patients across 4 care priorities', tone: 'coral', icon: 'alert', facts: [{ label: 'Critical', value: '8' }, { label: 'Serious', value: '21' }, { label: 'Stable', value: '45' }, { label: 'Observation', value: '18' }], timeline: [{ label: 'ICU beds', value: '2 patients waiting' }, { label: 'Average ED wait', value: '36 minutes' }], actionLabel: 'Open emergency queue' }
-  return <section className="panel emergency-panel"><div className="panel-heading"><div><span className="eyebrow">Real-time triage</span><h2>Emergency status</h2></div><button className="text-button" onClick={() => onOpenDetail(emergencyDetail)}>View all <Icon name="arrow" size={15} /></button></div><div className="emergency-summary"><div className="gauge"><svg viewBox="0 0 140 85"><path className="gauge-track" d="M12 74a58 58 0 0 1 116 0" /><path className="gauge-value" d="M12 74a58 58 0 0 1 116 0" /></svg><strong>92<small>ED patients</small></strong></div><div className="emergency-legend"><span><i className="severity critical" />Critical <b>8</b></span><span><i className="severity serious" />Serious <b>21</b></span><span><i className="severity stable" />Stable <b>45</b></span><span><i className="severity observation" />Observation <b>18</b></span></div></div><button className="critical-callout" onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Critical care queue', meta: '2 patients waiting for an ICU bed', actionLabel: 'Open emergency access' })}><span><Icon name="alert" size={18} /></span><strong>2 critical patients waiting for ICU bed</strong><Icon name="arrow" size={17} /></button><div className="emergency-teams"><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Trauma team', meta: 'Trauma response team · On track', tone: 'mint' })}><strong>Trauma</strong><span><i />On track</span></button><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Stroke team', meta: 'Stroke response team · On track', tone: 'mint' })}><strong>Stroke</strong><span><i />On track</span></button><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Cardiac team', meta: 'Cardiac response team · Needs attention', tone: 'coral' })}><strong>Cardiac</strong><span className="attention"><i />Needs attention</span></button></div><button className="emergency-panel-action button button-danger" onClick={onEmergency}><Icon name="alert" size={15} />Emergency access</button></section>
+  const emergencyDetail: DetailItem = { eyebrow: 'Real-time triage', title: 'Emergency status', meta: 'ED priority triage and active care queues', tone: 'coral', icon: 'alert', facts: [{ label: 'Level 1 (Resuscitation)', value: 'Active triage' }, { label: 'Level 2 (Emergent)', value: 'In treatment' }, { label: 'Trauma team', value: 'On call' }], timeline: [{ label: 'Telemetry', value: 'Real-time verified' }], actionLabel: 'Open emergency access' }
+  return <section className="panel emergency-panel"><div className="panel-heading"><div><span className="eyebrow">Real-time triage</span><h2>Emergency status</h2></div><button className="text-button" onClick={() => onOpenDetail(emergencyDetail)}>View all <Icon name="arrow" size={15} /></button></div><div className="emergency-summary"><div className="gauge"><svg viewBox="0 0 140 85"><path className="gauge-track" d="M12 74a58 58 0 0 1 116 0" /><path className="gauge-value" d="M12 74a58 58 0 0 1 116 0" /></svg><strong>18<small>ED cases</small></strong></div><div className="emergency-legend"><span><i className="severity critical" />Critical <b>3</b></span><span><i className="severity serious" />Serious <b>6</b></span><span><i className="severity stable" />Stable <b>9</b></span></div></div><button className="critical-callout" onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Critical care queue', meta: 'High acuity cases requiring active monitoring', actionLabel: 'Open emergency triage' })}><span><Icon name="alert" size={18} /></span><strong>Active emergency triage & bed allocation</strong><Icon name="arrow" size={17} /></button><div className="emergency-teams"><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Trauma team', meta: 'Trauma response team · On track', tone: 'mint' })}><strong>Trauma</strong><span><i />On track</span></button><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Stroke team', meta: 'Stroke response team · On track', tone: 'mint' })}><strong>Stroke</strong><span><i />On track</span></button><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Cardiac team', meta: 'Cardiac response team · Ready', tone: 'mint' })}><strong>Cardiac</strong><span className="attention"><i />Ready</span></button></div><button className="emergency-panel-action button button-danger" onClick={onEmergency}><Icon name="alert" size={15} />Emergency access</button></section>
 }
 
-function ModuleView({ activeNav, rows, search, remoteMetrics, onAction, onEmergency, onOpenDetail }: { activeNav: string; rows: { label: string; meta: string; value: string; tone: string }[]; search: string; remoteMetrics: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onEmergency: () => void; onOpenDetail: (item: DetailItem) => void }) {
-  const isEmergency = activeNav === 'Emergency'
-  if (activeNav === 'Health tracker') return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Personal health data</p><h1>Health tracker</h1><p className="page-subtitle">See your connected health signals, goals, and trends in one view.</p></div><div className="heading-actions"><button className="button button-primary" onClick={() => onAction('Health log opened', 'tap')}><Icon name="plus" size={18} />Log health data</button></div></div><HealthTracker remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} /></div>
-  return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and confidence.</p></div><div className="heading-actions"><button className="button button-primary" onClick={() => onAction(`${activeNav} creation flow opened`)}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div><div className="module-toolbar"><div className="module-count"><strong>{rows.length}</strong> active records {search && <span>matching “{search}”</span>}</div><div className="module-tools"><button className="button button-soft" onClick={() => onAction('Filters opened')}><Icon name="filter" size={17} />Filter</button><button className="button button-soft" onClick={() => onAction('Report export started')}><Icon name="download" size={17} />Export</button></div></div><section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row) => <button className="module-row" key={row.label} onClick={() => onOpenDetail({ eyebrow: activeNav, title: row.label, meta: row.meta, tone: row.tone === 'coral' ? 'coral' : row.tone === 'violet' ? 'violet' : row.tone === 'mint' ? 'mint' : 'cyan', icon: activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity', facts: [{ label: 'Status / value', value: row.value }, { label: 'Module', value: activeNav }, { label: 'Last updated', value: 'Just now' }], actionLabel: `Open ${row.label}` })}><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or clear the global search.</p></div>}</section></div>
+function ModuleView({
+  activeNav,
+  rows,
+  search,
+  statusFilter,
+  onStatusFilterChange,
+  showFilterBar,
+  onToggleFilterBar,
+  remoteMetrics,
+  onAction,
+  onOpenCreateModal,
+  onExport,
+  onEmergency,
+  onOpenDetail,
+}: {
+  activeNav: string
+  rows: { id: string; label: string; meta: string; value: string; tone: string; detail: DetailItem }[]
+  search: string
+  statusFilter: string
+  onStatusFilterChange: (status: string) => void
+  showFilterBar: boolean
+  onToggleFilterBar: () => void
+  remoteMetrics: RemoteHealthMetric[]
+  onAction: (message: string, tone?: FeedbackTone) => void
+  onOpenCreateModal: () => void
+  onExport: () => void
+  onEmergency: () => void
+  onOpenDetail: (item: DetailItem) => void
+}) {
+  const isEmergency = activeNav === 'Emergency' || activeNav === 'Queue management'
+  if (activeNav === 'Health tracker') {
+    return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Personal health data</p><h1>Health tracker</h1><p className="page-subtitle">See your connected health signals, goals, and trends in one view.</p></div><div className="heading-actions"><button className="button button-primary" onClick={onOpenCreateModal}><Icon name="plus" size={18} />Log health data</button></div></div><HealthTracker remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} onOpenLog={onOpenCreateModal} /></div>
+  }
+
+  const filterOptions = ['All', 'Stable', 'Confirmed', 'Completed', 'In stock', 'Low stock', 'Active', 'Paid', 'Pending']
+
+  return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and confidence.</p></div><div className="heading-actions"><button className="button button-primary" onClick={onOpenCreateModal}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div>
+    <div className="module-toolbar"><div className="module-count"><strong>{rows.length}</strong> active records {search && <span>matching “{search}”</span>}</div><div className="module-tools"><button className={`button ${showFilterBar ? 'button-primary' : 'button-soft'}`} onClick={onToggleFilterBar}><Icon name="filter" size={17} />Filter</button><button className="button button-soft" onClick={onExport}><Icon name="download" size={17} />Export CSV</button></div></div>
+    {showFilterBar && <div className="filter-bar">{filterOptions.map((opt) => <button key={opt} className={`filter-pill ${statusFilter === opt ? 'active' : ''}`} onClick={() => onStatusFilterChange(opt)}>{opt}</button>)}</div>}
+    <section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row) => <button className="module-row" key={row.id} onClick={() => onOpenDetail(row.detail)}><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or reset your filter.</p></div>}</section>
+  </div>
 }
 
-function Modal({ type, onClose, onAction }: { type: 'appointment' | 'emergency'; onClose: () => void; onAction: (message: string) => void }) {
-  const emergency = type === 'emergency'
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className={`modal ${emergency ? 'modal-emergency' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close dialog"><Icon name="close" size={19} /></button><div className={`modal-symbol ${emergency ? 'modal-symbol-danger' : 'modal-symbol-primary'}`}><Icon name={emergency ? 'alert' : 'calendar'} size={23} /></div><span className="eyebrow">{emergency ? 'Priority access' : 'Schedule care'}</span><h2 id="modal-title">{emergency ? 'Open emergency access' : 'Create new appointment'}</h2><p>{emergency ? 'This will open the protected emergency workflow for triage, patient identification, and bed coordination.' : 'Start a new appointment request and route it to the right care team.'}</p>{emergency ? <div className="emergency-modal-options"><button onClick={() => onAction('Emergency triage workflow opened')}><span className="option-icon option-icon-danger"><Icon name="alert" size={19} /></span><div><strong>Start emergency triage</strong><small>Register a new emergency case</small></div><Icon name="arrow" size={17} /></button><button onClick={() => onAction('Critical patient queue opened')}><span className="option-icon option-icon-violet"><Icon name="bed" size={19} /></span><div><strong>Review critical queue</strong><small>See patients awaiting immediate care</small></div><Icon name="arrow" size={17} /></button></div> : <div className="appointment-form"><label>Patient or record<input autoFocus placeholder="Search by name or patient ID" /></label><label>Care team<select defaultValue=""><option value="" disabled>Select department</option><option>Cardiology</option><option>Internal Medicine</option><option>Orthopedics</option><option>Pediatrics</option></select></label><div className="form-split"><label>Date<input type="date" defaultValue="2026-09-18" /></label><label>Time<select defaultValue="10:30"><option>09:00</option><option>10:30</option><option>13:00</option><option>14:30</option></select></label></div><button className="button button-primary button-full" onClick={() => onAction('Appointment draft created')}>Continue to review <Icon name="arrow" size={17} /></button></div>}</section></div>
+function Modal({ type, role, onClose, onCreated }: { type: ModalType; role: Role; onClose: () => void; onCreated: (message: string) => void }) {
+  // Appointment form state
+  const [patientName, setPatientName] = useState('')
+  const [department, setDepartment] = useState('Cardiology')
+  const [clinicianName, setClinicianName] = useState('Dr. Elena Ruiz')
+  const [aptDate, setAptDate] = useState('2026-10-20')
+  const [aptTime, setAptTime] = useState('10:30')
+  const [notes, setNotes] = useState('')
+  
+  // Emergency form state
+  const [edAcuity, setEdAcuity] = useState(2)
+  const [edComplaint, setEdComplaint] = useState('')
+  const [edVitals, setEdVitals] = useState('')
+  const [edTeam, setEdTeam] = useState('Cardiac')
+
+  // Health metric form state
+  const [metricType, setMetricType] = useState<'steps' | 'heart_rate' | 'sleep' | 'hydration' | 'blood_oxygen' | 'weight'>('steps')
+  const [metricValue, setMetricValue] = useState('7500')
+  const [metricGoal, setMetricGoal] = useState('8000')
+
+  // Patient form state
+  const [pName, setPName] = useState('')
+  const [pDept, setPDept] = useState('General Medicine')
+  const [pDob, setPDob] = useState('1985-06-15')
+  const [pGender, setPGender] = useState('Female')
+  const [pPhone, setPPhone] = useState('+1 555-0199')
+  const [pBlood, setPBlood] = useState('O+')
+  const [pAllergies, setPAllergies] = useState('')
+
+  // Prescription form state
+  const [rxPatient, setRxPatient] = useState('P-20391')
+  const [rxMedName, setRxMedName] = useState('Amoxicillin 500mg')
+  const [rxDosage, setRxDosage] = useState('500mg three times daily')
+  const [rxFrequency, setRxFrequency] = useState('Three times daily')
+  const [rxDuration, setRxDuration] = useState('7 days')
+
+  // Lab form state
+  const [labPatient, setLabPatient] = useState('P-20391')
+  const [labPatientName, setLabPatientName] = useState('Olivia Harris')
+  const [labTestType, setLabTestType] = useState('Complete Blood Count (CBC)')
+  const [labPriority, setLabPriority] = useState<'Routine' | 'Urgent' | 'Stat'>('Routine')
+
+  // Bed admission form state
+  const [admPatient, setAdmPatient] = useState('P-20391')
+  const [admBed, setAdmBed] = useState('bed_a102')
+  const [admDoctor, setAdmDoctor] = useState('Dr. Elena Ruiz')
+  const [admDiagnosis, setAdmDiagnosis] = useState('Cardiovascular observation')
+
+  // Invoice form state
+  const [invPatient, setInvPatient] = useState('P-20391')
+  const [invPatientName, setInvPatientName] = useState('Olivia Harris')
+  const [invDesc, setInvDesc] = useState('Specialist consultation and diagnostic labs')
+  const [invAmount, setInvAmount] = useState('450')
+  const [invCoverage, setInvCoverage] = useState('350')
+
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault()
+    setError('')
+    setSubmitting(true)
+    try {
+      if (type === 'appointment') {
+        const appointmentAt = new Date(`${aptDate}T${aptTime}:00.000Z`).toISOString()
+        await createAppointment({
+          patientId: role === 'Patient' ? undefined : (patientName || 'P-20391'),
+          department,
+          clinicianName,
+          appointmentAt,
+          notes,
+        })
+        onCreated('Appointment scheduled successfully')
+      } else if (type === 'emergency') {
+        await createEmergencyCase({
+          patientName: patientName || 'Emergency Patient',
+          triageAcuity: edAcuity,
+          chiefComplaint: edComplaint || 'Acute symptoms requiring emergency triage',
+          vitals: edVitals || 'BP 130/85, HR 88, SpO2 97%',
+          assignedTeam: edTeam,
+        })
+        onCreated('Emergency case admitted to triage queue')
+      } else if (type === 'health_metric') {
+        const unitMap: Record<string, string> = { steps: 'steps', heart_rate: 'bpm', sleep: 'minutes', hydration: 'L', blood_oxygen: '%', weight: 'kg' }
+        await logHealthMetric({
+          metricType,
+          value: parseFloat(metricValue),
+          unit: unitMap[metricType] || '',
+          goalValue: metricGoal ? parseFloat(metricGoal) : undefined,
+        })
+        onCreated('Health metric logged successfully')
+      } else if (type === 'patient') {
+        await createPatient({
+          name: pName,
+          department: pDept,
+          dob: pDob,
+          gender: pGender,
+          phone: pPhone,
+          bloodGroup: pBlood,
+          allergies: pAllergies,
+        })
+        onCreated(`Patient ${pName} registered successfully`)
+      } else if (type === 'prescription') {
+        await createPrescription({
+          patientId: rxPatient,
+          medicationId: 'med_amx',
+          medicationName: rxMedName,
+          dosage: rxDosage,
+          frequency: rxFrequency,
+          duration: rxDuration,
+        })
+        onCreated(`Prescription for ${rxMedName} submitted`)
+      } else if (type === 'lab') {
+        await createLabOrder({
+          patientId: labPatient,
+          patientName: labPatientName,
+          testType: labTestType,
+          priority: labPriority,
+        })
+        onCreated(`Lab order for ${labTestType} placed`)
+      } else if (type === 'admission') {
+        await createAdmission({
+          patientId: admPatient,
+          bedId: admBed,
+          admittingDoctor: admDoctor,
+          diagnosis: admDiagnosis,
+        })
+        onCreated('Patient admitted to inpatient bed')
+      } else if (type === 'invoice') {
+        await createInvoice({
+          patientId: invPatient,
+          patientName: invPatientName,
+          description: invDesc,
+          amount: parseFloat(invAmount),
+          insuranceCoverage: parseFloat(invCoverage),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        })
+        onCreated('Billing invoice generated')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Operation failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section className={`modal ${type === 'emergency' ? 'modal-emergency' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close dialog"><Icon name="close" size={19} /></button><div className={`modal-symbol ${type === 'emergency' ? 'modal-symbol-danger' : 'modal-symbol-primary'}`}><Icon name={type === 'emergency' ? 'alert' : type === 'appointment' ? 'calendar' : type === 'health_metric' ? 'activity' : 'plus'} size={23} /></div><span className="eyebrow">{type === 'emergency' ? 'Priority access' : 'Clinical action'}</span><h2 id="modal-title">{type === 'emergency' ? 'Emergency Triage Registration' : type === 'appointment' ? 'Schedule Appointment' : type === 'health_metric' ? 'Log Health Metric' : type === 'patient' ? 'Register New Patient' : type === 'prescription' ? 'Prescribe Medication' : type === 'lab' ? 'Order Diagnostic Lab' : type === 'admission' ? 'Inpatient Bed Admission' : 'Generate Billing Invoice'}</h2>
+    <form className="appointment-form" onSubmit={handleSubmit}>
+      {error && <div className="auth-error" role="alert"><Icon name="alert" size={16} />{error}</div>}
+      {type === 'appointment' && <>
+        {role !== 'Patient' && <label>Patient Name or ID<input autoFocus required value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="e.g. Eleanor Roosevelt" /></label>}
+        <label>Department<select value={department} onChange={(e) => setDepartment(e.target.value)}><option>Cardiology</option><option>Internal Medicine</option><option>Orthopedics</option><option>Pediatrics</option><option>Surgery</option><option>Endocrinology</option></select></label>
+        <label>Clinician<input value={clinicianName} onChange={(e) => setClinicianName(e.target.value)} placeholder="Dr. Elena Ruiz" /></label>
+        <div className="form-split"><label>Date<input type="date" required value={aptDate} onChange={(e) => setAptDate(e.target.value)} /></label><label>Time<select value={aptTime} onChange={(e) => setAptTime(e.target.value)}><option>08:00</option><option>09:30</option><option>10:30</option><option>13:00</option><option>14:30</option><option>16:00</option></select></label></div>
+        <label>Clinical Notes<textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Reason for consultation, relevant symptoms..." /></label>
+      </>}
+      {type === 'emergency' && <>
+        <label>Patient Name<input autoFocus required value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="Patient name or unidentified alias" /></label>
+        <label>Triage Acuity Level<select value={edAcuity} onChange={(e) => setEdAcuity(Number(e.target.value))}><option value={1}>Level 1 — Resuscitation (Immediate Life Threat)</option><option value={2}>Level 2 — Emergent / Critical</option><option value={3}>Level 3 — Urgent / Serious</option><option value={4}>Level 4 — Less Urgent / Stable</option><option value={5}>Level 5 — Non-Urgent</option></select></label>
+        <label>Chief Complaint<input required value={edComplaint} onChange={(e) => setEdComplaint(e.target.value)} placeholder="e.g. Acute severe substernal chest pain" /></label>
+        <label>Initial Vitals<input value={edVitals} onChange={(e) => setEdVitals(e.target.value)} placeholder="e.g. BP 160/95, HR 112, SpO2 94%" /></label>
+        <label>Assigned Care Team<select value={edTeam} onChange={(e) => setEdTeam(e.target.value)}><option>Cardiac</option><option>Trauma</option><option>Stroke</option><option>Respiratory</option><option>General</option></select></label>
+      </>}
+      {type === 'health_metric' && <>
+        <label>Metric Type<select value={metricType} onChange={(e) => setMetricType(e.target.value as typeof metricType)}><option value="steps">Steps (count)</option><option value="heart_rate">Heart Rate (bpm)</option><option value="sleep">Sleep (minutes)</option><option value="hydration">Hydration (Liters)</option><option value="blood_oxygen">Blood Oxygen (SpO2 %)</option><option value="weight">Weight (kg)</option></select></label>
+        <div className="form-split"><label>Recorded Value<input required type="number" step="any" value={metricValue} onChange={(e) => setMetricValue(e.target.value)} /></label><label>Goal Target (Optional)<input type="number" step="any" value={metricGoal} onChange={(e) => setMetricGoal(e.target.value)} /></label></div>
+      </>}
+      {type === 'patient' && <>
+        <label>Full Name<input autoFocus required value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Patient full legal name" /></label>
+        <label>Department<select value={pDept} onChange={(e) => setPDept(e.target.value)}><option>General Medicine</option><option>Cardiology</option><option>Surgery</option><option>Pediatrics</option><option>Endocrinology</option></select></label>
+        <div className="form-split"><label>Date of Birth<input type="date" value={pDob} onChange={(e) => setPDob(e.target.value)} /></label><label>Gender<select value={pGender} onChange={(e) => setPGender(e.target.value)}><option>Female</option><option>Male</option><option>Other</option></select></label></div>
+        <div className="form-split"><label>Phone<input value={pPhone} onChange={(e) => setPPhone(e.target.value)} placeholder="+1 555-0199" /></label><label>Blood Group<select value={pBlood} onChange={(e) => setPBlood(e.target.value)}><option>O+</option><option>O-</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option></select></label></div>
+        <label>Allergies<input value={pAllergies} onChange={(e) => setPAllergies(e.target.value)} placeholder="e.g. Penicillin, Latex" /></label>
+      </>}
+      {type === 'prescription' && <>
+        <label>Patient ID<input required value={rxPatient} onChange={(e) => setRxPatient(e.target.value)} placeholder="P-20391" /></label>
+        <label>Medication Name<input required value={rxMedName} onChange={(e) => setRxMedName(e.target.value)} placeholder="Amoxicillin 500mg" /></label>
+        <label>Dosage & Instructions<input required value={rxDosage} onChange={(e) => setRxDosage(e.target.value)} placeholder="500mg three times daily with food" /></label>
+        <div className="form-split"><label>Frequency<input value={rxFrequency} onChange={(e) => setRxFrequency(e.target.value)} placeholder="Daily" /></label><label>Duration<input value={rxDuration} onChange={(e) => setRxDuration(e.target.value)} placeholder="14 days" /></label></div>
+      </>}
+      {type === 'lab' && <>
+        <label>Patient ID<input required value={labPatient} onChange={(e) => setLabPatient(e.target.value)} placeholder="P-20391" /></label>
+        <label>Patient Name<input required value={labPatientName} onChange={(e) => setLabPatientName(e.target.value)} placeholder="Olivia Harris" /></label>
+        <label>Diagnostic Test<select value={labTestType} onChange={(e) => setLabTestType(e.target.value)}><option>Complete Blood Count (CBC)</option><option>Troponin I (High Sensitivity)</option><option>Comprehensive Metabolic Panel</option><option>Lipid Panel</option><option>Chest X-Ray (2 Views)</option><option>Magnetic Resonance Imaging (MRI)</option></select></label>
+        <label>Priority<select value={labPriority} onChange={(e) => setLabPriority(e.target.value as typeof labPriority)}><option value="Routine">Routine</option><option value="Urgent">Urgent</option><option value="Stat">Stat (Immediate)</option></select></label>
+      </>}
+      {type === 'admission' && <>
+        <label>Patient ID<input required value={admPatient} onChange={(e) => setAdmPatient(e.target.value)} placeholder="P-20391" /></label>
+        <label>Target Bed<select value={admBed} onChange={(e) => setAdmBed(e.target.value)}><option value="bed_a102">Ward A · Room 101 · Bed 2 (Standard)</option><option value="bed_c301">Ward C · Room 301 · Bed 1 (Standard)</option><option value="bed_icu2">ICU · Room ICU-2 · Bed 2 (Critical Care)</option></select></label>
+        <label>Admitting Physician<input value={admDoctor} onChange={(e) => setAdmDoctor(e.target.value)} placeholder="Dr. Elena Ruiz" /></label>
+        <label>Primary Diagnosis<input required value={admDiagnosis} onChange={(e) => setAdmDiagnosis(e.target.value)} placeholder="Inpatient care diagnosis" /></label>
+      </>}
+      {type === 'invoice' && <>
+        <label>Patient ID<input required value={invPatient} onChange={(e) => setInvPatient(e.target.value)} placeholder="P-20391" /></label>
+        <label>Patient Name<input required value={invPatientName} onChange={(e) => setInvPatientName(e.target.value)} placeholder="Olivia Harris" /></label>
+        <label>Description of Services<input required value={invDesc} onChange={(e) => setInvDesc(e.target.value)} placeholder="Clinical consultation and diagnostics" /></label>
+        <div className="form-split"><label>Total Amount ($)<input required type="number" step="any" value={invAmount} onChange={(e) => setInvAmount(e.target.value)} /></label><label>Insurance Covered ($)<input type="number" step="any" value={invCoverage} onChange={(e) => setInvCoverage(e.target.value)} /></label></div>
+      </>}
+      <button className="button button-primary button-full" disabled={submitting} type="submit"><Icon name={submitting ? 'clock' : 'check'} size={17} />{submitting ? 'Processing…' : 'Submit & Save Record'}</button>
+    </form>
+  </section></div>
 }
 
 export default App

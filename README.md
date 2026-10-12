@@ -8,55 +8,66 @@ MediNexus is a premium, role-aware hospital management platform concept built ar
 
 The GitHub Pages site is a static frontend preview. The Node.js + SQLite API is a separate backend today. The Docker deployment described below serves the built frontend and API from one origin, keeping session cookies same-site; the existing GitHub Pages preview does not use that hosted backend.
 
-## Current slice
+## Key Features & Capabilities
 
-- Role-aware Admin, Doctor, Staff, and Patient workspaces
-- Responsive app shell with mobile navigation
-- Operations dashboard with KPI cards, schedule, patient flow chart, team activity, and emergency status
-- Searchable module views for patients, appointments, beds, emergency, pharmacy, labs, billing, reports, and settings
-- Working appointment and emergency dialogs, role switching, notifications, chart range controls, row selection, detail drawers, toasts, and empty search state
-- Patient health tracker with steps, heart rate, sleep, hydration, blood oxygen, weight, trend visualization, daily goals, and metric detail panels
-- Light/dark theme switching with device persistence, sound feedback, supported vibration cues, and a preferences panel
-- Accessible semantic controls, keyboard-visible focus, Escape-to-close dialogs/menus, ⌘/Ctrl+K search focus, and reduced-motion support
-- Node/SQLite API foundation with schema bootstrapping, registration/login/logout sessions, server-side role checks, audit logging, patient/appointment queries, notifications, and health-metric writes
-- Live API connection indicator with a graceful demo-data fallback when the API is not running
-- Authenticated Patient flow in the UI, session restoration, sign-out, RBAC-aware workspace switching, and API-backed health tracker values
+- **Role-Aware Workspaces:** Tailored views and controls for Admin, Doctor, Staff, and Patient roles with server-side Role-Based Access Control (RBAC).
+- **Comprehensive Clinical & Operational Modules:**
+  - **Patients Management:** Demographics, medical history, allergies, emergency contacts, real-time search & status filtering.
+  - **Appointments Lifecycle:** Full appointment scheduling, confirmation, clinical consultation completion, and cancellation with room and doctor assignments.
+  - **Inpatient Beds & Admissions:** Ward bed inventory management across Ward A, B, C and ICU with status transitions (`Available`, `Occupied`, `Cleaning`, `Maintenance`), inpatient admissions, and safe discharges.
+  - **Emergency Triage Queue:** 5-tier Emergency Severity Index (ESI) triage system (Resuscitation, Emergent, Urgent, Less Urgent, Non-Urgent) with vital signs tracking and rapid clinical team assignments.
+  - **Pharmacy & Prescriptions:** Medication stock tracking, unit pricing, doctor prescribing, and pharmacist dispensing workflows.
+  - **Diagnostic Labs:** Lab test orders catalog (CBC, Troponin, MRI, Lipid Panel, etc.) with priority levels (`routine`, `urgent`, `stat`), sample collection tracking, and clinical result recording.
+  - **Billing & Invoices:** Patient billing generation, insurance coverage calculations, patient copay tracking, and direct payment processing.
+  - **Clinical Notes (SOAP):** Structured Subjective, Objective, Assessment, and Plan documentation linked to patients and providers.
+- **Real-Time KPI Dashboards:** Live operational KPI aggregation calculating active patients, today's appointments, emergency cases, bed occupancy rates, pending lab orders, and monthly revenue.
+- **Interactive Action Modals & Drawers:**
+  - Rapid booking modal for appointments
+  - Emergency triage intake modal
+  - Patient registration modal
+  - Inpatient bed admission modal
+  - Doctor prescription ordering modal
+  - Diagnostic lab requisition modal
+  - Invoice billing creation modal
+  - Actionable side drawer for discharging patients, dispensing medications, recording lab results, and settling invoices.
+- **Data Export & Reporting:** Direct server-side sanitized CSV export for all database tables (`/api/export/:table`).
+- **Patient Health Tracking:** Real-time metrics tracking for steps, heart rate, sleep, hydration, SpO2, and weight with trend visualizations.
+- **Deep Security Hardening:**
+  - Robust session management with HTTP-only, SameSite cookies.
+  - Role-Based Access Control (RBAC) enforced on every API route.
+  - Secure HTTP headers (CSP, HSTS, X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy).
+  - Configured CORS origins with safe localhost/127.0.0.1 development fallback.
+  - In-memory rate limiting against brute-force authentication and registration spam.
 
-## Self-hosted deployment
+## Automated Verification & Test Suite
 
-The repository includes a Dockerfile and Docker Compose setup for hosting the **frontend and API on one origin**. Caddy handles HTTPS automatically after your domain's DNS points to the server. SQLite data is stored in a named Docker volume so app image rebuilds do not replace the database.
+The test suite includes 12 comprehensive end-to-end integration and RBAC verification tests covering:
+1. Public health check
+2. Secure session restoration
+3. Patient registration, login, and session cookie validation
+4. Admin provisioning and operational dashboard aggregation
+5. Full patient lifecycle (create, query, update)
+6. Complete appointment lifecycle (request, confirm, complete, cancel)
+7. Bed management, inpatient admission, and discharge workflows
+8. Emergency triage queue intake and prioritization
+9. Pharmacy medication stock and prescription dispensing
+10. Diagnostic lab requisition, prioritization, and result recording
+11. Billing invoice creation, insurance copay, and payment settlement
+12. Strict Role-Based Access Control enforcement (forbidden operations blocked)
 
-**Before starting:** point an A/AAAA record for your domain at the server, allow inbound TCP ports 80 and 443 (and optionally UDP 443), and install Docker Engine with the Compose plugin.
+Run tests locally:
 
-1. Copy `.env.example` to `.env`.
-2. Set `DOMAIN` to the real DNS name and `MEDINEXUS_PUBLIC_ORIGIN` to the matching `https://...` origin. Change the example values before running Compose.
-3. Set a strong password of at least 16 characters for the provisioned `MEDINEXUS_ADMIN_PASSWORD` and its email/name fields if you want an initial administrator. Keep all passwords in `.env`; never commit that file or use real patient credentials for a demo.
-4. Start the app:
-
-```sh
-docker compose up -d --build
-docker compose ps
-docker compose logs -f app
+```bash
+npm run test:server
 ```
 
-Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; only Caddy exposes ports 80 and 443. Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin.
+Run TypeScript compilation and production bundle build:
 
-Useful maintenance commands:
-
-```sh
-docker compose logs --tail=200 app
-docker compose pull caddy
-docker compose up -d --build
-docker compose down
+```bash
+npm run build
 ```
 
-The named `medinexus_data` volume persists the SQLite file across container recreation. Back it up regularly and test restoring a backup before updating the app. Do not run `docker compose down -v` unless you intentionally want to delete persistent volumes.
-
-**Authentication guardrails:** the API rate-limits login attempts (10 per client per minute by default) and registrations (5 per client per hour by default). The Compose deployment sets `MEDINEXUS_TRUST_PROXY=true` only behind Caddy, which overwrites `X-Forwarded-For` with the connecting client address. Do not enable trusted-proxy mode unless your own reverse proxy does the same. These in-memory limits are for a single instance and do not replace account lockout policy, monitoring, MFA, or a managed identity service.
-
-**Data and security boundary:** this is a portfolio/demo project, not a validated hospital information system. The current authorization and workflows are not sufficient for real patient records, clinical decisions, or regulated healthcare use. Use synthetic data only until the app has undergone a comprehensive security, privacy, operational, and clinical-safety review.
-
-## Run locally
+## Run Locally
 
 ```bash
 npm install
@@ -69,26 +80,14 @@ In a second terminal, start the API:
 npm run server:start
 ```
 
-The API listens on `http://127.0.0.1:8787` by default and creates its local SQLite file at `data/medinexus.sqlite`. Copy `.env.example` to `.env` to configure the port, database path, CORS origin, or provisioned staff accounts. The `server:dev` and `server:start` scripts load `.env` before initializing the API and database. Never commit `.env` or production credentials. Production requires `MEDINEXUS_DB_PATH` to be an absolute path on persistent storage and never seeds synthetic patient records, sample appointments, or baseline health metrics.
+The API listens on `http://127.0.0.1:8787` by default and creates its local SQLite file at `data/medinexus.sqlite`.
 
-Production build:
+## Self-hosted Deployment
 
-```bash
-npm run build
+The repository includes a Dockerfile and Docker Compose setup for hosting the frontend and API on one origin with Caddy handling HTTPS automatically.
+
+```sh
+docker compose up -d --build
+docker compose ps
+docker compose logs -f app
 ```
-
-Server workflow tests:
-
-```bash
-npm run test:server
-```
-
-## Design direction
-
-The product uses a midnight navy navigation rail, a true-white and pale blue-gray workspace, electric cyan / violet accents, mint success states, and coral emergency signaling. The generated desktop concept used for the first implementation reference is saved at `public/concepts/medinexus-dashboard-concept.png`.
-
-## Roadmap
-
-1. Connect the role-aware UI to authenticated API sessions and replace remaining demo dashboard fixtures with API data.
-2. Expand appointments, patient records, clinical notes, admissions, pharmacy, lab, billing, and insurance workflows.
-3. Add automated API/UI tests, migrations, production observability, and a managed relational database deployment.
