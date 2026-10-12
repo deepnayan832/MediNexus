@@ -81,6 +81,12 @@ database.exec(`
     read_at TEXT,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS notification_reads (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+    read_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, notification_id)
+  );
   CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -93,7 +99,11 @@ database.exec(`
   CREATE INDEX IF NOT EXISTS idx_appointments_patient_id ON appointments(patient_id);
   CREATE INDEX IF NOT EXISTS idx_health_metrics_patient ON health_metrics(patient_user_id, metric_type, recorded_at);
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id, read_at);
 `)
+
+ // Reset legacy shared read flags once per startup: read state now belongs to each user.
+database.exec('UPDATE notifications SET read_at = NULL WHERE user_id IS NULL')
 
 const now = () => new Date().toISOString()
 const id = (prefix: string) => `${prefix}_${randomBytes(9).toString('hex')}`
@@ -314,17 +324,35 @@ export function createHealthMetric(input: { userId: string; metricType: string; 
 
 export function listNotifications(userId: string) {
   return database.prepare(`
-    SELECT id, title, body, kind, read_at AS readAt, created_at AS createdAt
-    FROM notifications WHERE user_id IS NULL OR user_id = ? ORDER BY created_at DESC LIMIT 50
-  `).all(userId) as Row[]
+    SELECT n.id, n.title, n.body, n.kind,
+      CASE WHEN n.user_id IS NULL THEN nr.read_at ELSE n.read_at END AS readAt,
+      n.created_at AS createdAt
+    FROM notifications n
+    LEFT JOIN notification_reads nr
+      ON nr.notification_id = n.id AND nr.user_id = ?
+    WHERE n.user_id IS NULL OR n.user_id = ?
+    ORDER BY n.created_at DESC LIMIT 50
+  `).all(userId, userId) as Row[]
 }
 
 export function markNotificationRead(userId: string, notificationId: string) {
-  database.prepare(`UPDATE notifications SET read_at = ? WHERE id = ? AND (user_id IS NULL OR user_id = ?)`).run(now(), notificationId, userId)
+  const readAt = now()
+  database.prepare(`
+    INSERT INTO notification_reads (user_id, notification_id, read_at)
+    SELECT ?, id, ? FROM notifications WHERE id = ? AND user_id IS NULL
+    ON CONFLICT(user_id, notification_id) DO UPDATE SET read_at = excluded.read_at
+  `).run(userId, readAt, notificationId)
+  database.prepare(`UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ?`).run(readAt, notificationId, userId)
 }
 
 export function markAllNotificationsRead(userId: string) {
-  database.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND (user_id IS NULL OR user_id = ?)`).run(now(), userId)
+  const readAt = now()
+  database.prepare(`
+    INSERT INTO notification_reads (user_id, notification_id, read_at)
+    SELECT ?, id, ? FROM notifications WHERE user_id IS NULL
+    ON CONFLICT(user_id, notification_id) DO UPDATE SET read_at = excluded.read_at
+  `).run(userId, readAt)
+  database.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND user_id = ?`).run(readAt, userId)
 }
 
 function seedCoreData() {
@@ -356,9 +384,19 @@ function seedCoreData() {
 }
 
 function provisionUserFromEnvironment(prefix: 'ADMIN' | 'DOCTOR' | 'STAFF') {
-  const email = process.env[`MEDINEXUS_${prefix}_EMAIL`]
+  const email = process.env[`MEDINEXUS_${prefix}_EMAIL`]?.trim()
   const password = process.env[`MEDINEXUS_${prefix}_PASSWORD`]
-  if (!email || !password || getUserByEmail(email)) return
+  if (!email && !password) return
+  if (!email || !password) {
+    throw new Error(`Set both MEDINEXUS_${prefix}_EMAIL and MEDINEXUS_${prefix}_PASSWORD to provision this account.`)
+  }
+  if (getUserByEmail(email)) return
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email))) {
+    throw new Error(`MEDINEXUS_${prefix}_EMAIL must be a valid email address.`)
+  }
+  if (password.length < 16) {
+    throw new Error(`MEDINEXUS_${prefix}_PASSWORD must be at least 16 characters.`)
+  }
   const name = process.env[`MEDINEXUS_${prefix}_NAME`] ?? prefix[0] + prefix.slice(1).toLowerCase()
   createUser({ email, name, password, role: prefix === 'ADMIN' ? 'Admin' : prefix === 'DOCTOR' ? 'Doctor' : 'Staff' })
 }
