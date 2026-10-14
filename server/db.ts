@@ -513,8 +513,19 @@ export function createUser(input: { email: string; name: string; password: strin
   return getUserById(userId) as User
 }
 
+export function checkDatabaseHealth(): boolean {
+  try {
+    const row = database.prepare('SELECT 1 AS ok').get() as Row | undefined
+    return Number(row?.ok) === 1
+  } catch {
+    return false
+  }
+}
+
 export function createSession(userId: string, expiresAt: string, tokenHash: string) {
-  database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)').run(tokenHash, userId, expiresAt, now())
+  const currentTime = now()
+  database.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(currentTime)
+  database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)').run(tokenHash, userId, expiresAt, currentTime)
 }
 
 export function getUserBySession(tokenHash: string): User | null {
@@ -530,6 +541,14 @@ export function deleteSession(tokenHash: string) {
   database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash)
 }
 
+export function revokeOtherUserSessions(userId: string, keepTokenHash?: string | null) {
+  if (keepTokenHash) {
+    database.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').run(userId, keepTokenHash)
+  } else {
+    database.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
+  }
+}
+
 export function audit(userId: string | null, action: string, entityType: string, entityId?: string) {
   database.prepare('INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
     id('aud'),
@@ -539,6 +558,17 @@ export function audit(userId: string | null, action: string, entityType: string,
     entityId ?? null,
     now(),
   )
+}
+
+export function listAuditLogs(limit = 50) {
+  const safeLimit = Math.min(200, Math.max(1, Math.floor(limit)))
+  return database.prepare(`
+    SELECT a.id, a.user_id AS userId, COALESCE(u.name, 'System') AS userName, COALESCE(u.role, 'System') AS userRole, a.action, a.entity_type AS entityType, a.entity_id AS entityId, a.created_at AS createdAt
+    FROM audit_logs a
+    LEFT JOIN users u ON u.id = a.user_id
+    ORDER BY a.created_at DESC
+    LIMIT ?
+  `).all(safeLimit) as Row[]
 }
 
 /* =========================================================================
@@ -829,8 +859,20 @@ export function createBed(input: { ward: string; roomNumber: string; bedNumber: 
 }
 
 export function updateBedStatus(bedId: string, status: 'Available' | 'Occupied' | 'Cleaning' | 'Maintenance') {
+  const existing = getBedById(bedId)
+  if (!existing) return null
   database.prepare(`UPDATE beds SET status = ? WHERE id = ?`).run(status, bedId)
   return getBedById(bedId)
+}
+
+export function getAdmissionById(admissionId: string) {
+  return database.prepare(`
+    SELECT a.id, a.patient_id AS patientId, p.name AS patientName, a.bed_id AS bedId, b.ward, b.bed_number AS bedNumber, a.admitting_doctor AS admittingDoctor, a.diagnosis, a.status, a.admitted_at AS admittedAt, a.discharged_at AS dischargedAt
+    FROM admissions a
+    JOIN patients p ON p.id = a.patient_id
+    JOIN beds b ON b.id = a.bed_id
+    WHERE a.id = ?
+  `).get(admissionId) as Row | undefined ?? null
 }
 
 export function listAdmissions(status?: string) {
@@ -994,6 +1036,10 @@ export function getMedicationById(id: string) {
   return database.prepare(`SELECT id, name, code, category, stock_quantity AS stockQuantity, unit, reorder_level AS reorderLevel, unit_price AS unitPrice, status, created_at AS createdAt FROM medications WHERE id = ?`).get(id) as Row | undefined ?? null
 }
 
+export function getMedicationByName(name: string) {
+  return database.prepare(`SELECT id, name, code, category, stock_quantity AS stockQuantity, unit, reorder_level AS reorderLevel, unit_price AS unitPrice, status, created_at AS createdAt FROM medications WHERE lower(name) = lower(?) OR lower(code) = lower(?)`).get(name.trim(), name.trim()) as Row | undefined ?? null
+}
+
 export function createMedication(input: {
   name: string
   code: string
@@ -1086,14 +1132,27 @@ export function createPrescription(input: {
   `).get(rxId) as Row
 }
 
-export function dispensePrescription(rxId: string) {
-  database.prepare(`UPDATE prescriptions SET status = 'Dispensed' WHERE id = ?`).run(rxId)
+export function getPrescriptionById(rxId: string) {
   return database.prepare(`
     SELECT pr.id, pr.patient_id AS patientId, p.name AS patientName, pr.doctor_id AS doctorId, pr.doctor_name AS doctorName, pr.medication_id AS medicationId, pr.medication_name AS medicationName, pr.dosage, pr.frequency, pr.duration, pr.status, pr.prescribed_at AS prescribedAt
     FROM prescriptions pr
     JOIN patients p ON p.id = pr.patient_id
     WHERE pr.id = ?
-  `).get(rxId) as Row
+  `).get(rxId) as Row | undefined ?? null
+}
+
+export function dispensePrescription(rxId: string) {
+  const existing = getPrescriptionById(rxId)
+  if (!existing) return null
+  database.prepare(`UPDATE prescriptions SET status = 'Dispensed' WHERE id = ?`).run(rxId)
+  if (existing.medicationId) {
+    const med = getMedicationById(String(existing.medicationId))
+    if (med) {
+      const nextStock = Math.max(0, Number(med.stockQuantity) - 1)
+      updateMedicationStock(String(med.id), nextStock)
+    }
+  }
+  return getPrescriptionById(rxId)
 }
 
 /* =========================================================================
@@ -1303,18 +1362,34 @@ export function createInsuranceClaim(input: {
    CLINICAL NOTES
 ========================================================================= */
 
-export function listClinicalNotes(patientId: string, user: User) {
+export function listClinicalNotes(patientId: string | undefined, user: User) {
   if (user.role === 'Patient') {
     const patient = database.prepare('SELECT id FROM patients WHERE user_id = ?').get(user.id) as Row | undefined
-    if (!patient || patient.id !== patientId) return []
+    if (!patient) return []
+    if (patientId && String(patient.id) !== patientId) return []
+    return database.prepare(`
+      SELECT cn.id, cn.patient_id AS patientId, p.name AS patientName, cn.author_id AS authorId, cn.author_name AS authorName, cn.note_type AS noteType, cn.subjective, cn.objective, cn.assessment, cn.plan, cn.created_at AS createdAt
+      FROM clinical_notes cn
+      JOIN patients p ON p.id = cn.patient_id
+      WHERE cn.patient_id = ?
+      ORDER BY cn.created_at DESC LIMIT 100
+    `).all(String(patient.id)) as Row[]
+  }
+  if (patientId) {
+    return database.prepare(`
+      SELECT cn.id, cn.patient_id AS patientId, p.name AS patientName, cn.author_id AS authorId, cn.author_name AS authorName, cn.note_type AS noteType, cn.subjective, cn.objective, cn.assessment, cn.plan, cn.created_at AS createdAt
+      FROM clinical_notes cn
+      JOIN patients p ON p.id = cn.patient_id
+      WHERE cn.patient_id = ?
+      ORDER BY cn.created_at DESC LIMIT 100
+    `).all(patientId) as Row[]
   }
   return database.prepare(`
     SELECT cn.id, cn.patient_id AS patientId, p.name AS patientName, cn.author_id AS authorId, cn.author_name AS authorName, cn.note_type AS noteType, cn.subjective, cn.objective, cn.assessment, cn.plan, cn.created_at AS createdAt
     FROM clinical_notes cn
     JOIN patients p ON p.id = cn.patient_id
-    WHERE cn.patient_id = ?
     ORDER BY cn.created_at DESC LIMIT 100
-  `).all(patientId) as Row[]
+  `).all() as Row[]
 }
 
 export function createClinicalNote(input: {
@@ -1413,7 +1488,7 @@ export function getDashboardSummary(user: User) {
 ========================================================================= */
 
 export function exportTableToCsv(tableName: string, user: User): string {
-  const allowedTables = ['patients', 'appointments', 'beds', 'emergency_cases', 'medications', 'lab_orders', 'billing_invoices']
+  const allowedTables = ['patients', 'appointments', 'beds', 'admissions', 'emergency_cases', 'medications', 'prescriptions', 'lab_orders', 'billing_invoices', 'insurance_claims', 'clinical_notes']
   if (!allowedTables.includes(tableName)) {
     throw new Error('Table not permitted for export.')
   }
@@ -1425,14 +1500,22 @@ export function exportTableToCsv(tableName: string, user: User): string {
     rows = listAppointments(user)
   } else if (tableName === 'beds') {
     rows = listBeds()
+  } else if (tableName === 'admissions') {
+    rows = listAdmissions()
   } else if (tableName === 'emergency_cases') {
     rows = listEmergencyCases()
   } else if (tableName === 'medications') {
     rows = listMedications()
+  } else if (tableName === 'prescriptions') {
+    rows = listPrescriptions(user)
   } else if (tableName === 'lab_orders') {
     rows = listLabOrders(user)
   } else if (tableName === 'billing_invoices') {
     rows = listInvoices(user)
+  } else if (tableName === 'insurance_claims') {
+    rows = listInsuranceClaims(user)
+  } else if (tableName === 'clinical_notes') {
+    rows = listClinicalNotes(undefined, user)
   }
 
   if (rows.length === 0) return 'No records found\n'
@@ -1440,7 +1523,11 @@ export function exportTableToCsv(tableName: string, user: User): string {
   const headers = Object.keys(rows[0])
   const escapeCsv = (val: unknown) => {
     if (val === null || val === undefined) return ''
-    const str = String(val).replace(/"/g, '""')
+    let raw = String(val)
+    if (/^[=+\-@\t\r]/.test(raw)) {
+      raw = `'${raw}`
+    }
+    const str = raw.replace(/"/g, '""')
     return `"${str}"`
   }
 
