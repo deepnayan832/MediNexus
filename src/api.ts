@@ -163,6 +163,17 @@ export type ApiClinicalNote = {
   createdAt: string
 }
 
+export type ApiAuditLog = {
+  id: string
+  userId: string | null
+  userName: string
+  userRole: string
+  action: string
+  entityType: string
+  entityId: string | null
+  createdAt: string
+}
+
 export type ApiNotification = {
   id: string
   title: string
@@ -393,7 +404,7 @@ export function getPrescriptions(patientId = '') {
 
 export function createPrescription(data: {
   patientId: string
-  medicationId: string
+  medicationId?: string
   medicationName: string
   dosage: string
   frequency: string
@@ -468,8 +479,14 @@ export function createInsuranceClaim(data: {
 }
 
 /* Clinical Notes */
-export function getClinicalNotes(patientId: string) {
-  return request<{ notes: ApiClinicalNote[] }>(`/api/clinical-notes?patientId=${encodeURIComponent(patientId)}`).then((res) => res.notes)
+export function getClinicalNotes(patientId = '') {
+  const qs = patientId ? `?patientId=${encodeURIComponent(patientId)}` : ''
+  return request<{ notes: ApiClinicalNote[] }>(`/api/clinical-notes${qs}`).then((res) => res.notes)
+}
+
+/* Audit Logs */
+export function getAuditLogs(limit = 50) {
+  return request<{ logs: ApiAuditLog[] }>(`/api/audit-logs?limit=${limit}`).then((res) => res.logs)
 }
 
 export function createClinicalNote(data: {

@@ -22,9 +22,14 @@ export function clearSession(request: IncomingMessage, response: ServerResponse)
   response.setHeader('Set-Cookie', clearSessionCookie(process.env.NODE_ENV === 'production'))
 }
 
-export function currentUser(request: IncomingMessage): User | null {
+export function currentSessionTokenHash(request: IncomingMessage): string | null {
   const token = parseCookies(request)[sessionCookie]
-  return token ? getUserBySession(tokenHash(token)) : null
+  return token ? tokenHash(token) : null
+}
+
+export function currentUser(request: IncomingMessage): User | null {
+  const hash = currentSessionTokenHash(request)
+  return hash ? getUserBySession(hash) : null
 }
 
 export function requireUser(request: IncomingMessage, response: ServerResponse) {

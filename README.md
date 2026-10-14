@@ -1,41 +1,61 @@
 # MediNexus
 
-MediNexus is a role-aware hospital management platform prototype built around one connected care workspace. It combines clinical and operational workflows in a responsive React + Vite frontend with a Node.js + SQLite API.
+MediNexus is a full-stack, role-aware hospital management platform built around a unified React + TypeScript frontend and a Node.js + SQLite backend API.
 
 ## Live Demo
 
 **GitHub Pages:** https://deepnayan832.github.io/MediNexus/
 
-GitHub Pages hosts a static frontend preview; it does not connect to the separately hosted Node.js + SQLite API. The self-hosted Docker deployment below serves the frontend and API from one origin so session cookies remain same-site.
+The GitHub Pages site is a static frontend preview. The Node.js + SQLite API is a server backend that can be run locally or self-hosted via Docker Compose + Caddy on a single HTTPS origin so session cookies remain `SameSite=Lax`.
 
 ## Key Features & Capabilities
 
-- **Role-aware workspaces:** Admin, Doctor, Staff, and Patient views with server-side role-based access control (RBAC).
-- **Patient management:** Demographics, medical history, allergies, emergency contacts, search, and status filtering.
-- **Appointment lifecycle:** Scheduling, confirmation, completion, and cancellation, with clinician and room assignments.
-- **Beds and admissions:** Ward and bed inventory, availability and occupancy status, inpatient admissions, and discharge workflows.
-- **Emergency triage:** Five-level Emergency Severity Index (ESI), vital signs, acuity prioritization, and clinical team assignment.
-- **Pharmacy and prescriptions:** Medication stock, prescribing, and dispensing workflows.
-- **Diagnostic labs:** Test ordering, priority tracking, and result recording.
-- **Billing and insurance:** Invoice creation, insurance coverage and patient-due calculations, claims, and payment settlement.
-- **Clinical notes:** Structured SOAP notes (Subjective, Objective, Assessment, Plan) linked to patients and providers.
-- **Live operational dashboards:** API-backed KPIs for patient activity, appointments, emergency cases, bed occupancy, lab orders, and revenue.
-- **Reports and exports:** Authorized server-side CSV exports for supported database tables.
-- **Patient health tracker:** Steps, heart rate, sleep, hydration, blood oxygen (SpO₂), and weight, with trend visualizations.
-- **Accessible interaction patterns:** Responsive navigation, keyboard-visible focus, Escape-to-close dialogs and menus, Ctrl/⌘+K search focus, and reduced-motion support.
-- **Security foundations:** HTTP-only session cookies, RBAC enforcement, security headers, origin checks, and authentication/registration rate limits.
+- **Role-Aware Workspaces:** Tailored views and controls for `Admin`, `Doctor`, `Staff`, and `Patient` roles with strict server-side Role-Based Access Control (RBAC) and resource-level ownership verification (IDOR protection).
+- **Comprehensive Clinical & Operational Modules:**
+  - **Patients Management:** Demographics, medical history, blood group, allergies, real-time search, and status filtering.
+  - **Appointments Lifecycle:** Full appointment scheduling, confirmation, clinical consultation completion, and patient-scoped cancellation with room and clinician assignments.
+  - **Inpatient Beds & Admissions:** Ward bed inventory management across Ward A, B, C, and ICU with status transitions (`Available`, `Occupied`, `Cleaning`, `Maintenance`), bed availability enforcement (`409 Conflict` against double occupancy), active admission linking, and safe patient discharges.
+  - **Emergency Triage Queue:** 5-tier Emergency Severity Index (ESI) triage system (`1` Resuscitation through `5` Non-Urgent) with vital signs tracking, team assignment, treatment progression, and discharge.
+  - **Pharmacy & Prescriptions:** Medication catalog, stock & reorder tracking, restocking (`PATCH /api/medications/:id`), doctor prescribing (`POST /api/prescriptions`), and pharmacist dispensing (`PATCH /api/prescriptions/:id/dispense`) with atomic stock decrement and double-dispense prevention.
+  - **Diagnostic Labs:** Lab test orders catalog (CBC, Troponin, MRI, Lipid Panel, etc.) with priority levels (`Routine`, `Urgent`, `Stat`) and diagnostic result recording.
+  - **Billing, Invoices & Insurance Claims:** Patient billing generation, insurance coverage calculations, patient copay tracking, direct payment settlement (`POST /api/billing/:id/pay` with double-payment protection), and verified insurance claim submission (`POST /api/insurance`).
+  - **Clinical Notes & Care Messages (SOAP):** Structured Subjective, Objective, Assessment, and Plan documentation (`GET /api/clinical-notes`, `POST /api/clinical-notes`) accessible in the **Messages** workspace module.
+  - **Hospital Reports & Audit Trail:** Formula-safe CSV exports across 11 hospital domains (`/api/export/:table`) and live server security audit log inspection (`GET /api/audit-logs`).
+  - **Workspace Settings:** Live account profile editing (`PATCH /api/auth/profile`), password rotation with automatic revocation of other active sessions (`POST /api/auth/change-password`), and persistent theme/audio/haptic accessibility preferences.
+- **Patient Health Tracking:** Real-time metrics tracking for steps, heart rate, sleep, hydration, SpO2, and weight (`GET /api/health-metrics`, `POST /api/health-metrics`).
+- **Security Hardening:**
+  - `scrypt` password hashing with per-user random 16-byte salts and constant-time (`timingSafeEqual`) verification.
+  - Server-backed sessions (`medinexus_session`) in `HttpOnly`, `SameSite=Lax` cookies (`Secure` in production), with expired session pruning and session revocation on password change.
+  - Resource-level ownership checks preventing cross-patient IDOR on appointments, clinical notes, invoices, and insurance claims.
+  - Formula-injection neutralization (`CWE-1236`) on all CSV exports.
+  - Strict Origin validation on state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`) and sliding-window rate limiting on login and registration.
 
-## Automated Verification
+## Automated Verification & Test Suite
 
-The server test suite covers health and session endpoints, registration and login, privileged-account provisioning, patient and appointment workflows, admissions, emergency triage, pharmacy, diagnostics, billing, exports, and access-control boundaries.
+The test suite (`tests/server.test.ts`) includes 15 end-to-end integration, business-logic, and security regression tests:
+1. Patient registration, RBAC enforcement, health metric logging, and session logout
+2. Cross-origin write rejection (`403 Forbidden`)
+3. Unsafe registration and malformed health metric rejection (`422`)
+4. Sliding-window rate limiting on repeated login attempts (`429`)
+5. Per-user private notification read-state isolation
+6. Weak bootstrap password rejection for privileged accounts
+7. Staff and doctor patient, appointment, and clinical SOAP note lifecycle
+8. Inpatient bed creation, admission, occupancy transition, and discharge flow
+9. Emergency triage queue intake and status/vitals updates
+10. Pharmacy catalog, prescribing, dispensing, lab diagnostics, billing, and insurance claims
+11. Authorized CSV export and patient export denial (`403`)
+12. User profile update and password change
+13. Cross-patient IDOR protection on appointments (`GET`/`PATCH`), clinical notes (`GET`), insurance claims (`POST`), pharmacy inventory (`GET`), and audit logs (`GET`)
+14. Bed double-occupancy prevention (`409`), double-discharge prevention (`409`), prescription stock decrement & double-dispense prevention (`409`), CSV formula injection sanitization, and admin audit log verification
+15. Automatic revocation of other active sessions upon password change
 
-Run the server tests:
+Run tests locally:
 
 ```bash
 npm run test:server
 ```
 
-Run TypeScript checks and the production frontend build:
+Run TypeScript compilation and production bundle build:
 
 ```bash
 npm run build
@@ -43,7 +63,7 @@ npm run build
 
 ## Run Locally
 
-Install dependencies and start the frontend:
+Copy `.env.example` to `.env` if you want to customize ports, database paths, or bootstrap accounts, then run:
 
 ```bash
 npm install
@@ -56,52 +76,14 @@ In a second terminal, start the API:
 npm run server:start
 ```
 
-The API listens at `http://127.0.0.1:8787` by default and creates its SQLite database at `data/medinexus.sqlite`. Copy `.env.example` to `.env` to configure the port, database path, CORS origin, and optional provisioned staff accounts. The `server:dev` and `server:start` scripts load `.env` before initializing the API and database.
+The API listens on `http://127.0.0.1:8787` by default and creates its local SQLite database at `data/medinexus.sqlite` with WAL mode and foreign keys enabled.
 
-Never commit `.env`, production credentials, or real patient data. In production, `MEDINEXUS_DB_PATH` must be an absolute path on persistent storage; production mode does not seed synthetic patient records, sample appointments, or baseline health metrics.
+## Self-Hosted Deployment (Non-Oracle)
 
-## Self-hosted Deployment
-
-The repository includes a Dockerfile and Docker Compose setup that host the frontend and API on one origin. Caddy provisions and renews HTTPS certificates after the domain's DNS points to the server. SQLite data is stored in a named Docker volume, so rebuilding the application image does not replace the database.
-
-### Before you start
-
-- Point an A/AAAA DNS record for your domain at the server.
-- Allow inbound TCP ports 80 and 443 (and optionally UDP 443) through the server firewall.
-- Install Docker Engine and the Docker Compose plugin.
-
-### Configure and start
-
-1. Copy `.env.example` to `.env`.
-2. Set `DOMAIN` to the real DNS name and `MEDINEXUS_PUBLIC_ORIGIN` to its matching HTTPS origin, for example `https://hospital.example.com`. Replace all example values before starting.
-3. If you want an initial administrator, set the administrator email/name and a strong `MEDINEXUS_ADMIN_PASSWORD` of at least 16 characters. Keep secrets in `.env`; never commit that file.
-4. Build and start the services:
+The repository includes a multi-stage `Dockerfile`, `compose.yaml`, and `deploy/Caddyfile` for self-hosting the built frontend and Node.js + SQLite API on a single HTTPS origin with Caddy managing TLS certificates automatically:
 
 ```sh
 docker compose up -d --build
 docker compose ps
 docker compose logs -f app
 ```
-
-Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; Caddy exposes ports 80 and 443.
-
-Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin. If you intentionally use a separate frontend origin, add it to `MEDINEXUS_CORS_ORIGINS`; production accepts only HTTPS origins without paths or credentials.
-
-### Maintenance and backups
-
-Useful commands:
-
-```sh
-docker compose logs --tail=200 app
-docker compose pull caddy
-docker compose up -d --build
-docker compose down
-```
-
-The named `medinexus_data` volume persists the SQLite database across container recreation. Back it up regularly and test restoring a backup before updating the app. Do not run `docker compose down -v` unless you intentionally want to delete persistent volumes.
-
-### Authentication and security guardrails
-
-The API limits login attempts (10 per client per minute by default) and registrations (5 per client per hour by default). Compose enables `MEDINEXUS_TRUST_PROXY=true` only behind Caddy, which overwrites `X-Forwarded-For` with the connecting client address. Do not enable trusted-proxy mode unless your reverse proxy does the same. These in-memory limits are for a single instance and do not replace account-lockout policy, monitoring, multi-factor authentication, or a managed identity service.
-
-**Data and clinical-safety boundary:** MediNexus is a portfolio/demo project, not a validated hospital information system. Its authorization and workflows have not been validated for real patient records, clinical decisions, or regulated healthcare use. Use synthetic data only until the application has undergone comprehensive security, privacy, operational, and clinical-safety review.
