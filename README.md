@@ -40,7 +40,7 @@ docker compose ps
 docker compose logs -f app
 ```
 
-Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; only Caddy exposes ports 80 and 443. Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin.
+Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; only Caddy exposes ports 80 and 443. Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin. If a separate frontend origin is needed, add it to `MEDINEXUS_CORS_ORIGINS`; production accepts only HTTPS origins without paths or credentials.
 
 Useful maintenance commands:
 

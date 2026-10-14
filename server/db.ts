@@ -188,7 +188,7 @@ export function createUser(input: { email: string; name: string; password: strin
         patientId,
         'Dr. Elena Ruiz',
         'General Medicine',
-        '2026-09-18T10:30:00.000Z',
+        new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         'Room 301',
         'Requested',
       )
@@ -231,6 +231,10 @@ export function getUserBySession(tokenHash: string): User | null {
 
 export function deleteSession(tokenHash: string) {
   database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash)
+}
+
+export function deleteUserSessions(userId: string) {
+  database.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
 }
 
 export function audit(userId: string | null, action: string, entityType: string, entityId?: string) {

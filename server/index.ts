@@ -42,14 +42,36 @@ if (isProduction && !publicOrigin) {
   throw new Error('Production requires MEDINEXUS_PUBLIC_ORIGIN, e.g. https://medinexus.example.com.')
 }
 
-const configuredCorsOrigins = (process.env.MEDINEXUS_CORS_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean)
-const developmentOrigins = !isProduction ? (process.env.MEDINEXUS_CORS_ORIGIN ?? 'http://127.0.0.1:5173').split(',').map((value) => value.trim()).filter(Boolean) : []
+function parseOriginList(name: string, raw: string, requireHttps: boolean): string[] {
+  return raw.split(',').map((value) => value.trim()).filter(Boolean).map((value) => {
+    let parsed: URL
+    try { parsed = new URL(value) }
+    catch { throw new Error(`${name} must contain comma-separated absolute origins.`) }
+    const protocolAllowed = requireHttps ? parsed.protocol === 'https:' : ['http:', 'https:'].includes(parsed.protocol)
+    if (!protocolAllowed || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+      throw new Error(`${name} must contain ${requireHttps ? 'HTTPS ' : ''}origins without credentials, paths, queries, or fragments.`)
+    }
+    return parsed.origin
+  })
+}
+
+const configuredCorsOrigins = parseOriginList('MEDINEXUS_CORS_ORIGINS', process.env.MEDINEXUS_CORS_ORIGINS ?? '', isProduction)
+const developmentOrigins = !isProduction
+  ? parseOriginList('MEDINEXUS_CORS_ORIGIN', process.env.MEDINEXUS_CORS_ORIGIN ?? 'http://127.0.0.1:5173', false)
+  : []
 const allowedOrigins = new Set([...(publicOrigin ? [publicOrigin] : []), ...configuredCorsOrigins, ...developmentOrigins])
 const staticRoot = resolve(process.env.MEDINEXUS_STATIC_DIR ?? 'dist')
 const staticIndexPath = resolve(staticRoot, 'index.html')
 const hasBuiltFrontend = existsSync(staticIndexPath)
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const metricTypes = new Set(['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'])
+const metricUnits = new Map([
+  ['steps', 'steps'],
+  ['heart_rate', 'bpm'],
+  ['sleep', 'minutes'],
+  ['hydration', 'L'],
+  ['blood_oxygen', '%'],
+  ['weight', 'kg'],
+])
 const appointmentDepartments = new Set(['Cardiology', 'Internal Medicine', 'Orthopedics', 'Pediatrics'])
 const trustProxy = process.env.MEDINEXUS_TRUST_PROXY === 'true'
 const loginLimiter = new SlidingWindowLimiter()
@@ -286,8 +308,8 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       const unit = asString(body.unit, 20)
       const goalValue = body.goalValue === undefined ? undefined : asNumber(body.goalValue)
       const recordedAt = asString(body.recordedAt, 40) || new Date().toISOString()
-      if (!metricTypes.has(metricType) || !unit || !Number.isFinite(value) || value < 0 || (goalValue !== undefined && !Number.isFinite(goalValue)) || Number.isNaN(Date.parse(recordedAt))) {
-        sendError(response, 422, 'Metric type, value, unit, and timestamp must be valid.', 'VALIDATION_ERROR')
+      if (!metricUnits.has(metricType) || unit !== metricUnits.get(metricType) || !Number.isFinite(value) || value < 0 || (goalValue !== undefined && (!Number.isFinite(goalValue) || goalValue < 0)) || Number.isNaN(Date.parse(recordedAt))) {
+        sendError(response, 422, 'Metric type, unit, value, goal, and timestamp must be valid.', 'VALIDATION_ERROR')
         return
       }
       const metric = createHealthMetric({ userId: user.id, metricType, value, unit, goalValue, recordedAt: new Date(recordedAt).toISOString() })

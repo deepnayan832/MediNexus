@@ -28,8 +28,13 @@ export function parseCookies(request: IncomingMessage) {
   const header = request.headers.cookie ?? ''
   return Object.fromEntries(header.split(';').map((part) => part.trim()).filter(Boolean).map((part) => {
     const separator = part.indexOf('=')
-    return separator === -1 ? [part, ''] : [part.slice(0, separator), decodeURIComponent(part.slice(separator + 1))]
-  }))
+    if (separator === -1) return [part, '']
+    const name = part.slice(0, separator).trim()
+    if (!name) return [part, '']
+    let value = part.slice(separator + 1)
+    try { value = decodeURIComponent(value) } catch { value = value.replace(/%[0-9A-Fa-f]{0,1}$/g, '') }
+    return [name, value]
+  }).filter(([name]) => Boolean(name)))
 }
 
 export function setSessionCookie(token: string, secure = process.env.NODE_ENV === 'production') {

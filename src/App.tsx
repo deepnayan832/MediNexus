@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { checkApiHealth, createAppointment as apiCreateAppointment, getAppointments, getCurrentUser, getHealthMetrics, login as apiLogin, logout as apiLogout, register as apiRegister, type ApiStatus, type ApiUser, type RemoteAppointment, type RemoteHealthMetric } from './api'
+import { checkApiHealth, createAppointment as apiCreateAppointment, createHealthMetric as apiCreateHealthMetric, getAppointments, getCurrentUser, getHealthMetrics, login as apiLogin, logout as apiLogout, register as apiRegister, type ApiStatus, type ApiUser, type HealthMetricType, type RemoteAppointment, type RemoteHealthMetric } from './api'
 
 type Role = 'Admin' | 'Doctor' | 'Staff' | 'Patient'
 type Theme = 'light' | 'dark'
@@ -65,6 +65,7 @@ type DetailItem = {
   facts: { label: string; value: string }[]
   timeline?: { label: string; value: string }[]
   actionLabel?: string
+  metricType?: HealthMetricType
 }
 
 const roleProfiles: Record<Role, { name: string; title: string; initials: string; workspace: string }> = {
@@ -177,6 +178,15 @@ const healthMetricTypes: Record<string, RemoteHealthMetric['metricType']> = {
   'Blood oxygen': 'blood_oxygen',
   Weight: 'weight',
 }
+
+const healthMetricOptions: { type: HealthMetricType; label: string; unit: string; step: string }[] = [
+  { type: 'steps', label: 'Steps', unit: 'steps', step: '1' },
+  { type: 'heart_rate', label: 'Heart rate', unit: 'bpm', step: '1' },
+  { type: 'sleep', label: 'Sleep', unit: 'minutes', step: '1' },
+  { type: 'hydration', label: 'Hydration', unit: 'L', step: '0.1' },
+  { type: 'blood_oxygen', label: 'Blood oxygen', unit: '%', step: '0.1' },
+  { type: 'weight', label: 'Weight', unit: 'kg', step: '0.1' },
+]
 
 const moduleRows: Record<string, { label: string; meta: string; value: string; tone: 'cyan' | 'mint' | 'violet' | 'coral' }[]> = {
   Patients: [
@@ -337,12 +347,14 @@ function App() {
   const [preferencesOpen, setPreferencesOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [modal, setModal] = useState<'appointment' | 'emergency' | null>(null)
+  const [healthMetricType, setHealthMetricType] = useState<HealthMetricType | 'choose' | null>(null)
   const [detailItem, setDetailItem] = useState<DetailItem | null>(null)
   const [selectedAppointment, setSelectedAppointment] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [showAllSchedule, setShowAllSchedule] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const appointmentRequestVersion = useRef(0)
+  const healthMetricRequestVersion = useRef(0)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -376,10 +388,11 @@ function App() {
       return
     }
     let active = true
+    const requestVersion = ++healthMetricRequestVersion.current
     getHealthMetrics().then((metrics) => {
-      if (active) setRemoteHealthMetrics(metrics)
+      if (active && requestVersion === healthMetricRequestVersion.current) setRemoteHealthMetrics(metrics)
     }).catch(() => {
-      if (active) setRemoteHealthMetrics([])
+      if (active && requestVersion === healthMetricRequestVersion.current) setRemoteHealthMetrics([])
     })
     return () => { active = false }
   }, [sessionUser])
@@ -418,6 +431,7 @@ function App() {
   }, [])
 
   const profile = sessionUser ? { ...roleProfiles[role], name: sessionUser.name, initials: sessionUser.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() } : roleProfiles[role]
+  const demoMode = !sessionUser || import.meta.env.DEV
   const navItems = navByRole[role]
   const kpis = baseKpis[role]
   const workspaceRoles: Role[] = sessionUser ? [sessionUser.role] : (Object.keys(roleProfiles) as Role[])
@@ -500,6 +514,14 @@ function App() {
     setRemoteAppointments((current) => [...current, appointment].sort((left, right) => left.appointmentAt.localeCompare(right.appointmentAt)))
   }
 
+  const handleCreateHealthMetric = async (input: { metricType: HealthMetricType; value: number; unit: string; goalValue?: number }) => {
+    if (sessionUser?.role !== 'Patient') throw new Error('Sign in with a patient account to save health readings.')
+    const metric = await apiCreateHealthMetric(input)
+    healthMetricRequestVersion.current += 1
+    setRemoteHealthMetrics((current) => [metric, ...current].sort((left, right) => right.recordedAt.localeCompare(left.recordedAt)))
+    return metric
+  }
+
   const handleSignOut = async () => {
     try {
       await apiLogout()
@@ -507,6 +529,7 @@ function App() {
       setSessionUser(null)
       setRemoteHealthMetrics([])
       setRemoteAppointments([])
+      healthMetricRequestVersion.current += 1
       setRole('Admin')
       setActiveNav('Operations')
       setRoleOpen(false)
@@ -559,22 +582,30 @@ function App() {
             <div><h1>Good morning, {profile.name}</h1><p className="page-subtitle">{role === 'Patient' ? 'Your care plan, appointments, and next steps in one place.' : "Here is today's care overview"}</p></div>
             <div className="heading-actions"><button className="button button-primary" onClick={() => setModal('appointment')}><Icon name="calendar" size={18} />{role === 'Patient' ? 'Book appointment' : 'New appointment'}</button><button className="button button-danger" onClick={() => setModal('emergency')}><Icon name="alert" size={18} />Emergency access</button></div>
           </div>
-          <div className="kpi-grid">{kpis.map((kpi) => <KpiCard key={kpi.label} kpi={kpi} />)}</div>
-          {role === 'Patient' ? <PatientDashboard appointments={remoteAppointments} remoteMetrics={remoteHealthMetrics} onAction={handleAction} onBookAppointment={() => setModal('appointment')} onOpenDetail={openDetail} /> : <>
+          {!(role === 'Patient' && sessionUser) && <div className="kpi-grid">{kpis.map((kpi) => <KpiCard key={kpi.label} kpi={kpi} />)}</div>}
+          {role === 'Patient' ? <PatientDashboard demoMode={demoMode} appointments={remoteAppointments} remoteMetrics={remoteHealthMetrics} onBookAppointment={() => setModal('appointment')} onLogMetric={(type) => setHealthMetricType(type ?? 'choose')} onOpenTracker={() => setActiveNav('Health tracker')} onOpenDetail={openDetail} /> : <>
             <div className="main-grid">
               <section className="panel schedule-panel"><div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div><div className="schedule-list">{schedule.slice(0, showAllSchedule ? schedule.length : 6).map((item) => <button key={`${item.time}-${item.name}`} className={`schedule-row ${selectedAppointment === item.name ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.name); openDetail({ eyebrow: 'Appointment', title: item.name, meta: item.detail, tone: item.color === 'violet' ? 'violet' : item.color === 'mint' ? 'mint' : 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: item.time }, { label: 'Room', value: item.room }, { label: 'Care team', value: item.detail.split(' · ')[1] ?? 'General care' }], timeline: [{ label: 'Status', value: 'Confirmed' }, { label: 'Last updated', value: 'Just now' }] }); handleAction(`${item.name}'s appointment selected`, 'tap') }}><span className="schedule-time">{item.time}</span><span className={`schedule-dot dot-${item.color}`} /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.name}</strong><small>{item.detail}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button>)}</div></section>
               <section className="panel flow-panel"><div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div><div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div><FlowChart range={range} /><div className="flow-insights"><div><Icon name="people" size={22} /><strong>92<small>Currently in ED</small></strong><span className="insight-bad">▲ +8%</span></div><div><Icon name="bed" size={22} /><strong>14<small>Waiting for bed</small></strong><span className="insight-bad">▲ +27%</span></div><div><Icon name="clock" size={22} /><strong>36 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ −18%</span></div><div><Icon name="arrow" size={22} /><strong>28<small>Discharges today</small></strong><span className="insight-good">▲ +12%</span></div></div></section>
             </div>
             <div className="bottom-grid"><section className="panel activity-panel"><div className="panel-heading"><div><span className="eyebrow">Across the network</span><h2>Care team activity</h2></div><button className="text-button" onClick={() => openDetail({ eyebrow: 'Care team activity', title: 'Network activity feed', meta: '5 recent care events', tone: 'cyan', icon: 'activity', facts: [{ label: 'Events today', value: '28' }, { label: 'On track', value: '26' }, { label: 'Needs attention', value: '2' }], timeline: activity.slice(0, 4).map((item) => ({ label: item.time, value: `${item.name} · ${item.detail}` })) })}>View all <Icon name="arrow" size={15} /></button></div><div className="activity-list">{activity.map((item) => <div className="activity-row" key={item.name}><span className={`avatar avatar-${item.tone}`}>{item.initials}</span><span className="activity-time">{item.time}</span><div className="activity-copy"><strong>{item.name}</strong><small>{item.detail}</small></div><span className={`status status-${item.status === 'On track' ? 'success' : 'attention'}`}>{item.status}</span><button className="icon-button ghost" aria-label={`More options for ${item.name}`} onClick={() => openDetail({ eyebrow: 'Care team activity', title: item.name, meta: item.detail, tone: item.tone === 'coral' ? 'coral' : item.tone === 'violet' ? 'violet' : item.tone === 'mint' ? 'mint' : 'cyan', icon: 'activity', facts: [{ label: 'Status', value: item.status }, { label: 'Recorded', value: item.time }], actionLabel: 'Open care note' })}><Icon name="more" size={17} /></button></div>)}</div></section><EmergencyPanel onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} /></div>
           </>}
-        </> : <ModuleView activeNav={activeNav} rows={filteredRows} search={search} remoteMetrics={remoteHealthMetrics} onAction={handleAction} onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} />}
+        </> : <ModuleView activeNav={activeNav} rows={filteredRows} search={search} remoteMetrics={remoteHealthMetrics} demoMode={demoMode} onAction={handleAction} onLogMetric={(type) => setHealthMetricType(type ?? 'choose')} onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} />}
       </section>
     </main>
 
     {mobileNavOpen && <button className="mobile-scrim" aria-label="Dismiss navigation overlay" onClick={() => setMobileNavOpen(false)} />}
     {authOpen && <AuthDialog mode={authMode} onClose={() => setAuthOpen(false)} onModeChange={setAuthMode} onAuthenticated={handleAuthenticated} />}
     {modal && <Modal type={modal} role={role} canBookAppointment={sessionUser?.role === 'Patient'} onClose={() => setModal(null)} onRequestAuth={(mode) => { setModal(null); setAuthMode(mode); setAuthOpen(true) }} onCreateAppointment={handleCreateAppointment} onAction={handleAction} />}
-    {detailItem && <DetailsDrawer item={detailItem} onClose={() => setDetailItem(null)} onAction={(message) => { setDetailItem(null); handleAction(message) }} />}
+    {healthMetricType && <HealthMetricDialog initialType={healthMetricType} canWrite={sessionUser?.role === 'Patient'} onClose={() => setHealthMetricType(null)} onRequestAuth={(mode) => { setHealthMetricType(null); setAuthMode(mode); setAuthOpen(true) }} onCreate={handleCreateHealthMetric} onAction={handleAction} />}
+    {detailItem && <DetailsDrawer item={detailItem} onClose={() => setDetailItem(null)} onAction={(item) => {
+      setDetailItem(null)
+      if (item.metricType) {
+        setHealthMetricType(item.metricType)
+        return
+      }
+      handleAction(item.actionLabel ?? 'Full record opened')
+    }} />}
     {toast && <div className="toast" role="status"><span className="toast-icon"><Icon name="check" size={16} /></span>{toast}<button onClick={() => setToast(null)} aria-label="Dismiss"><Icon name="close" size={15} /></button></div>}
   </div>
 }
@@ -603,7 +634,54 @@ function AuthDialog({ mode, onClose, onModeChange, onAuthenticated }: { mode: 'l
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close authentication dialog"><Icon name="close" size={19} /></button><div className="modal-symbol modal-symbol-primary"><Icon name="shield" size={23} /></div><span className="eyebrow">Secure care access</span><h2 id="auth-title">{mode === 'login' ? 'Sign in to MediNexus' : 'Create your patient account'}</h2><p>{mode === 'login' ? 'Use your server-backed session to access role-protected care data.' : 'Create a Patient account to sync health metrics and notifications.'}</p><form className="appointment-form" onSubmit={submit}>{mode === 'register' && <label>Full name<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" /></label>}<label>Email<input autoFocus={mode === 'login'} required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label><label>Password<input required minLength={12} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" /></label>{error && <div className="auth-error" role="alert"><Icon name="alert" size={16} />{error}</div>}<button className="button button-primary button-full" disabled={submitting} type="submit"><Icon name={submitting ? 'clock' : 'arrow'} size={17} />{submitting ? 'Connecting…' : mode === 'login' ? 'Sign in' : 'Create account'}</button></form><button className="text-button auth-switch" onClick={() => { setError(''); onModeChange(mode === 'login' ? 'register' : 'login') }}>{mode === 'login' ? 'Create a new patient account' : 'Already have an account? Sign in'}</button><small className="auth-note">Sessions are stored in an HttpOnly cookie and enforced by the API.</small></section></div>
 }
 
-function PatientDashboard({ appointments, remoteMetrics, onAction, onBookAppointment, onOpenDetail }: { appointments: RemoteAppointment[]; remoteMetrics: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onBookAppointment: () => void; onOpenDetail: (item: DetailItem) => void }) {
+function HealthMetricDialog({ initialType, canWrite, onClose, onRequestAuth, onCreate, onAction }: { initialType: HealthMetricType | 'choose'; canWrite: boolean; onClose: () => void; onRequestAuth: (mode: 'login' | 'register') => void; onCreate: (input: { metricType: HealthMetricType; value: number; unit: string; goalValue?: number }) => Promise<RemoteHealthMetric>; onAction: (message: string) => void }) {
+  const [metricType, setMetricType] = useState<HealthMetricType>(initialType === 'choose' ? 'steps' : initialType)
+  const [value, setValue] = useState('')
+  const [goalValue, setGoalValue] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const option = healthMetricOptions.find((item) => item.type === metricType) ?? healthMetricOptions[0]
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError('')
+    const numericValue = Number(value)
+    const numericGoal = goalValue.trim() ? Number(goalValue) : undefined
+    if (!value.trim() || !Number.isFinite(numericValue) || numericValue < 0 || (numericGoal !== undefined && (!Number.isFinite(numericGoal) || numericGoal < 0))) {
+      setError('Enter a non-negative reading and an optional non-negative goal.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await onCreate({ metricType, value: numericValue, unit: option.unit, ...(numericGoal === undefined ? {} : { goalValue: numericGoal }) })
+      onClose()
+      onAction('Health reading saved to your account.')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'The health reading could not be saved.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="modal" role="dialog" aria-modal="true" aria-labelledby="health-metric-title">
+      <button className="modal-close icon-button ghost" onClick={onClose} aria-label="Close health reading dialog"><Icon name="close" size={19} /></button>
+      <div className="modal-symbol modal-symbol-primary"><Icon name="activity" size={23} /></div>
+      <span className="eyebrow">Personal health data</span>
+      <h2 id="health-metric-title">Log a health reading</h2>
+      <p>Save a measurement to your patient account. This tracker records values and does not interpret them.</p>
+      {canWrite ? <form className="appointment-form" onSubmit={submit}>
+        <label>Measurement<select required value={metricType} onChange={(event) => setMetricType(event.target.value as HealthMetricType)}>{healthMetricOptions.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}</select></label>
+        <label>Reading ({option.unit})<input required type="number" min="0" step={option.step} value={value} onChange={(event) => setValue(event.target.value)} autoFocus /></label>
+        <label>Goal (optional, {option.unit})<input type="number" min="0" step={option.step} value={goalValue} onChange={(event) => setGoalValue(event.target.value)} /></label>
+        {error && <div className="auth-error" role="alert"><Icon name="alert" size={16} />{error}</div>}
+        <button className="button button-primary button-full" disabled={submitting} type="submit"><Icon name={submitting ? 'clock' : 'check'} size={17} />{submitting ? 'Saving reading…' : 'Save reading'}</button>
+      </form> : <div className="appointment-form"><p>Sign in with a Patient account to save health readings.</p><button className="button button-primary button-full" onClick={() => onRequestAuth('login')}>Sign in</button><button className="button button-soft button-full" onClick={() => onRequestAuth('register')}>Create patient account</button></div>}
+    </section>
+  </div>
+}
+
+function PatientDashboard({ demoMode, appointments, remoteMetrics, onBookAppointment, onLogMetric, onOpenTracker, onOpenDetail }: { demoMode: boolean; appointments: RemoteAppointment[]; remoteMetrics: RemoteHealthMetric[]; onBookAppointment: () => void; onLogMetric: (type?: HealthMetricType) => void; onOpenTracker: () => void; onOpenDetail: (item: DetailItem) => void }) {
   const nextAppointment = appointments.find((appointment) => Date.parse(appointment.appointmentAt) >= Date.now())
   const appointmentDetail: DetailItem | null = nextAppointment ? {
     eyebrow: 'Next appointment',
@@ -617,55 +695,86 @@ function PatientDashboard({ appointments, remoteMetrics, onAction, onBookAppoint
 
   return <>
     <div className="patient-grid">
-      <section className="panel care-plan-panel">
-        <div className="patient-hero"><div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>92<small>%</small></strong></div></div>
+      {demoMode ? <section className="panel care-plan-panel">
+        <div className="patient-hero"><div><span className="eyebrow">Demo care plan</span><h2>Your recovery is on track</h2><p>Sample care-plan content for the interactive demo workspace.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>92<small>%</small></strong></div></div>
         <div className="plan-steps">
-          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div>
-          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Completed yesterday</small></div></div>
+          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Sample status</small></div></div>
+          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Sample status</small></div></div>
           {nextAppointment ? <div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>{nextAppointment.department} visit</strong><small>{new Date(nextAppointment.appointmentAt).toLocaleString()}</small></div><button className="text-button" onClick={() => appointmentDetail && onOpenDetail(appointmentDetail)}>Details <Icon name="arrow" size={15} /></button></div> : <div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>No upcoming appointment</strong><small>Request a visit with your care team.</small></div><button className="text-button" onClick={onBookAppointment}>Book <Icon name="arrow" size={15} /></button></div>}
         </div>
-      </section>
+      </section> : <section className="panel care-plan-panel">
+        <div className="patient-hero"><div><span className="eyebrow">Care plan</span><h2>No care plan on file</h2><p>Care-plan records are not connected to this account yet.</p></div></div>
+        <div className="plan-steps"><div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>Need a visit?</strong><small>Submit an appointment request to your care team.</small></div><button className="text-button" onClick={onBookAppointment}>Book <Icon name="arrow" size={15} /></button></div></div>
+      </section>}
       <section className="panel next-visit-panel">
         <div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>{nextAppointment ? `${nextAppointment.department} visit` : 'No visit scheduled'}</h2></div>{appointmentDetail && <button className="icon-button ghost" aria-label="More appointment options" onClick={() => onOpenDetail(appointmentDetail)}><Icon name="more" size={17} /></button>}</div>
         {nextAppointment ? <>
           <div className="visit-date"><span className="visit-day">{new Date(nextAppointment.appointmentAt).getDate()}</span><div><strong>{new Date(nextAppointment.appointmentAt).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</strong><small>{new Date(nextAppointment.appointmentAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · {nextAppointment.room}</small></div></div>
-          <div className="doctor-line"><span className="avatar avatar-cyan">{nextAppointment.clinicianName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span><div><strong>{nextAppointment.clinicianName}</strong><small>{nextAppointment.status}</small></div><button className="icon-button ghost" aria-label="Message care team" onClick={() => onAction('Message composer opened', 'tap')}><Icon name="message" size={17} /></button></div>
+          <div className="doctor-line"><span className="avatar avatar-cyan">{nextAppointment.clinicianName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span><div><strong>{nextAppointment.clinicianName}</strong><small>{nextAppointment.status}</small></div></div>
           <button className="button button-soft button-full" onClick={() => appointmentDetail && onOpenDetail(appointmentDetail)}>View appointment details <Icon name="arrow" size={16} /></button>
         </> : <><p className="page-subtitle">Your appointment requests will appear here once booked.</p><button className="button button-primary button-full" onClick={onBookAppointment}><Icon name="calendar" size={17} />Book an appointment</button></>}
       </section>
     </div>
-    <HealthTracker compact remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} />
+    <HealthTracker compact demoMode={demoMode} remoteMetrics={remoteMetrics} onLogMetric={onLogMetric} onOpenTracker={onOpenTracker} onOpenDetail={onOpenDetail} />
   </>
 }
 
-function HealthTracker({ compact = false, remoteMetrics, onAction, onOpenDetail }: { compact?: boolean; remoteMetrics?: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onOpenDetail: (item: DetailItem) => void }) {
+function HealthTracker({ compact = false, demoMode, remoteMetrics, onLogMetric, onOpenTracker, onOpenDetail }: { compact?: boolean; demoMode: boolean; remoteMetrics: RemoteHealthMetric[]; onLogMetric: (type?: HealthMetricType) => void; onOpenTracker?: () => void; onOpenDetail: (item: DetailItem) => void }) {
   const displayMetrics = useMemo(() => healthMetrics.map((metric) => {
     const metricType = healthMetricTypes[metric.label]
-    const latest = remoteMetrics?.filter((item) => item.metricType === metricType).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0]
-    if (!latest) return metric
-    const remoteValue = metricType === 'steps' ? Math.round(latest.value).toLocaleString() : metricType === 'heart_rate' ? `${Math.round(latest.value)} bpm` : metricType === 'sleep' ? `${Math.floor(latest.value / 60)}h ${Math.round(latest.value % 60)}m` : metricType === 'hydration' ? `${latest.value.toFixed(1)} L` : metricType === 'blood_oxygen' ? `${Math.round(latest.value)}%` : `${latest.value.toFixed(1)} kg`
-    const progress = latest.goalValue ? Math.min(100, Math.round((latest.value / latest.goalValue) * 100)) : metric.progress
-    return { ...metric, value: remoteValue, progress, meta: `Synced ${new Date(latest.recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` }
-  }), [remoteMetrics])
-  const healthDetail = (metric: typeof healthMetrics[number]): DetailItem => ({
+    const latest = remoteMetrics.filter((item) => item.metricType === metricType).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0]
+    if (!latest) return demoMode ? { ...metric, hasReading: true } : { ...metric, value: 'No reading yet', goal: 'No goal set', progress: 0, meta: 'No reading recorded', hasReading: false }
+    const remoteValue = metricType === 'steps' ? Math.round(latest.value).toLocaleString() : metricType === 'heart_rate' ? `${Math.round(latest.value)} bpm` : metricType === 'sleep' ? `${Math.floor(latest.value / 60)}h ${Math.round(latest.value % 60)}m` : metricType === 'hydration' ? `${latest.value.toFixed(1)} L` : metricType === 'blood_oxygen' ? `${latest.value.toFixed(1)}%` : `${latest.value.toFixed(1)} kg`
+    const progress = latest.goalValue && latest.goalValue > 0 ? Math.min(100, Math.round((latest.value / latest.goalValue) * 100)) : 0
+    const goal = latest.goalValue === null ? 'No goal set' : `Goal ${latest.goalValue} ${latest.unit}`
+    return { ...metric, value: remoteValue, goal, progress, meta: `Recorded ${new Date(latest.recordedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`, hasReading: true }
+  }), [demoMode, remoteMetrics])
+  const healthDetail = (metric: typeof displayMetrics[number]): DetailItem => ({
     eyebrow: 'Health tracker',
     title: metric.label,
     meta: `${metric.value} · ${metric.meta}`,
     tone: metric.tone,
     icon: metric.icon,
-    facts: [{ label: 'Current reading', value: metric.value }, { label: 'Target', value: metric.goal }, { label: 'Last synced', value: 'Just now' }],
-    timeline: [{ label: 'Today', value: metric.meta }, { label: 'Trend', value: metric.progress >= 90 ? 'On track' : 'Moving toward goal' }],
-    actionLabel: `Log ${metric.label.toLowerCase()}`,
+    facts: [{ label: 'Latest reading', value: metric.value }, { label: 'Target', value: metric.goal }, { label: 'Source', value: demoMode ? 'Demo sample' : metric.hasReading ? 'Patient account' : 'No reading recorded' }],
+    timeline: [{ label: metric.hasReading ? 'Recorded' : 'Status', value: metric.meta }],
+    actionLabel: 'Log a reading',
+    metricType: healthMetricTypes[metric.label],
   })
-  return <section className={`panel health-tracker ${compact ? 'health-tracker-compact' : ''}`}><div className="panel-heading"><div><span className="eyebrow">Personal health data</span><h2>{compact ? "Today's health snapshot" : 'Health tracker'}</h2></div><div className="tracker-heading-actions"><span className="sync-status"><i />{remoteMetrics?.length ? 'API synced just now' : 'Demo snapshot'}</span>{compact && <button className="text-button" onClick={() => onAction('Health tracker opened', 'tap')}>Open full tracker <Icon name="arrow" size={15} /></button>}</div></div><div className="health-metric-grid">{displayMetrics.map((metric) => <button className={`health-metric health-metric-${metric.tone}`} key={metric.label} onClick={() => onOpenDetail(healthDetail(metric))}><span className="health-metric-icon"><Icon name={metric.icon} size={19} /></span><span className="health-metric-copy"><strong>{metric.value}</strong><span>{metric.label}</span><small>{metric.meta}</small></span><span className="metric-progress"><i style={{ width: `${metric.progress}%` }} /></span><Icon name="chevron" size={14} /></button>)}</div><div className="health-visuals"><div className="health-chart-block"><div className="health-block-heading"><span><strong>Heart rate trend</strong><small>Resting average · Last 7 days</small></span><b>72 <small>bpm</small></b></div><svg className="health-chart" viewBox="0 0 520 115" role="img" aria-label="Heart rate trend chart"><defs><linearGradient id="health-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#19c5d1" stopOpacity=".22" /><stop offset="1" stopColor="#19c5d1" stopOpacity="0" /></linearGradient></defs><path className="health-grid-line" d="M0 20h520M0 57h520M0 94h520" /><path className="health-chart-fill" d="M0 80 74 68 148 77 222 42 296 55 370 31 444 44 520 22V115H0Z" /><polyline className="health-line" points="0,80 74,68 148,77 222,42 296,55 370,31 444,44 520,22" />{[[0,80],[74,68],[148,77],[222,42],[296,55],[370,31],[444,44],[520,22]].map(([cx, cy]) => <circle key={`${cx}-${cy}`} className="health-point" cx={cx} cy={cy} r="4" />)}</svg><div className="health-chart-days"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div></div><div className="health-insight-block"><div className="health-block-heading"><span><strong>Daily goals</strong><small>Keep your care plan moving</small></span><Icon name="spark" size={20} /></div><div className="goal-row"><span><i className="goal-icon goal-icon-cyan"><Icon name="activity" size={15} /></i><strong>Steps</strong><small>6,842 / 8,000</small></span><b>86%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-violet"><Icon name="moon" size={15} /></i><strong>Sleep</strong><small>7h 42m / 8h</small></span><b>96%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-mint"><Icon name="spark" size={15} /></i><strong>Hydration</strong><small>1.6 L / 2.0 L</small></span><b>80%</b></div><button className="button button-soft tracker-log-button" onClick={() => onAction('Health log opened', 'tap')}><Icon name="plus" size={15} />Log health data</button></div></div></section>
+
+  return <section className={`panel health-tracker ${compact ? 'health-tracker-compact' : ''}`}>
+    <div className="panel-heading">
+      <div><span className="eyebrow">Personal health data</span><h2>{compact ? "Today's health snapshot" : 'Health tracker'}</h2></div>
+      <div className="tracker-heading-actions">
+        <span className="sync-status"><i />{demoMode ? 'Demo sample' : remoteMetrics.length ? 'Saved readings' : 'No readings yet'}</span>
+        {compact && onOpenTracker && <button className="text-button" onClick={onOpenTracker}>Open full tracker <Icon name="arrow" size={15} /></button>}
+      </div>
+    </div>
+    <div className="health-metric-grid">
+      {displayMetrics.map((metric) => <button className={`health-metric health-metric-${metric.tone}`} key={metric.label} onClick={() => onOpenDetail(healthDetail(metric))}>
+        <span className="health-metric-icon"><Icon name={metric.icon} size={19} /></span>
+        <span className="health-metric-copy"><strong>{metric.value}</strong><span>{metric.label}</span><small>{metric.meta}</small></span>
+        <span className="metric-progress"><i style={{ width: `${metric.progress}%` }} /></span><Icon name="chevron" size={14} />
+      </button>)}
+    </div>
+    {demoMode ? <div className="health-visuals">
+      <div className="health-chart-block"><div className="health-block-heading"><span><strong>Heart rate trend</strong><small>Demo sample · Last 7 days</small></span><b>72 <small>bpm</small></b></div><svg className="health-chart" viewBox="0 0 520 115" role="img" aria-label="Sample heart rate trend"><defs><linearGradient id="health-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#19c5d1" stopOpacity=".22" /><stop offset="1" stopColor="#19c5d1" stopOpacity="0" /></linearGradient></defs><path className="health-grid-line" d="M0 20h520M0 57h520M0 94h520" /><path className="health-chart-fill" d="M0 80 74 68 148 77 222 42 296 55 370 31 444 44 520 22V115H0Z" /><polyline className="health-line" points="0,80 74,68 148,77 222,42 296,55 370,31 444,44 520,22" />{[[0,80],[74,68],[148,77],[222,42],[296,55],[370,31],[444,44],[520,22]].map(([cx, cy]) => <circle key={`${cx}-${cy}`} className="health-point" cx={cx} cy={cy} r="4" />)}</svg><div className="health-chart-days"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div></div>
+      <div className="health-insight-block"><div className="health-block-heading"><span><strong>Sample daily goals</strong><small>Demo values only</small></span><Icon name="spark" size={20} /></div><div className="goal-row"><span><i className="goal-icon goal-icon-cyan"><Icon name="activity" size={15} /></i><strong>Steps</strong><small>6,842 / 8,000</small></span><b>86%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-violet"><Icon name="moon" size={15} /></i><strong>Sleep</strong><small>7h 42m / 8h</small></span><b>96%</b></div><div className="goal-row"><span><i className="goal-icon goal-icon-mint"><Icon name="spark" size={15} /></i><strong>Hydration</strong><small>1.6 L / 2.0 L</small></span><b>80%</b></div><button className="button button-soft tracker-log-button" onClick={() => onLogMetric()}><Icon name="plus" size={15} />Log health data</button></div>
+    </div> : <div className="health-visuals">
+      <div className="health-chart-block">
+        <div className="health-block-heading"><span><strong>Recent readings</strong><small>Saved in your patient account</small></span></div>
+        {remoteMetrics.length ? <div className="metric-history-list">{remoteMetrics.slice(0, 8).map((metric) => <div className="metric-history-row" key={metric.id}><span><strong>{healthMetrics.find((item) => healthMetricTypes[item.label] === metric.metricType)?.label ?? metric.metricType}</strong><small>{new Date(metric.recordedAt).toLocaleString()}</small></span><b>{metric.value} {metric.unit}</b></div>)}</div> : <div className="empty-state"><span><Icon name="activity" size={22} /></span><h2>No readings saved</h2><p>Record a measurement to build this list.</p></div>}
+      </div>
+      <div className="health-insight-block"><div className="health-block-heading"><span><strong>Record a reading</strong><small>Choose the measurement you want to save.</small></span><Icon name="spark" size={20} /></div><p className="metric-entry-note">Values are saved to this account. The tracker records readings and does not interpret them.</p><button className="button button-soft tracker-log-button" onClick={() => onLogMetric()}><Icon name="plus" size={15} />Log health data</button></div>
+    </div>}
+  </section>
 }
 
 function PreferencesPanel({ theme, soundEnabled, hapticsEnabled, onThemeChange, onSoundChange, onHapticsChange, onAction }: { theme: Theme; soundEnabled: boolean; hapticsEnabled: boolean; onThemeChange: (theme: Theme) => void; onSoundChange: (enabled: boolean) => void; onHapticsChange: (enabled: boolean) => void; onAction: (message: string, tone?: FeedbackTone) => void }) {
   return <div className="preferences-panel"><div className="preferences-heading"><div><span className="eyebrow">Interface</span><h2>Preferences</h2></div><span className="privacy-note"><Icon name="shield" size={13} />Stored on this device</span></div><div className="preference-row"><span className="preference-icon"><Icon name={theme === 'dark' ? 'moon' : 'sun'} size={17} /></span><span><strong>Theme</strong><small>{theme === 'dark' ? 'Dark mode' : 'Light mode'}</small></span><button className="segmented-control" aria-label="Switch theme" onClick={() => { const nextTheme = theme === 'dark' ? 'light' : 'dark'; onThemeChange(nextTheme); onAction(`${nextTheme === 'dark' ? 'Dark' : 'Light'} theme enabled`, 'tap') }}><span className={theme === 'light' ? 'active' : ''}>Light</span><span className={theme === 'dark' ? 'active' : ''}>Dark</span></button></div><label className="preference-row preference-toggle"><span className="preference-icon"><Icon name={soundEnabled ? 'volume' : 'volumeOff'} size={17} /></span><span><strong>Sound feedback</strong><small>Short confirmation tones after actions</small></span><input type="checkbox" checked={soundEnabled} onChange={(event) => { onSoundChange(event.target.checked); onAction(event.target.checked ? 'Sound feedback enabled' : 'Sound feedback muted', 'tap') }} /><i /></label><label className="preference-row preference-toggle"><span className="preference-icon"><Icon name="vibrate" size={17} /></span><span><strong>Vibration cues</strong><small>Use supported device haptics for feedback</small></span><input type="checkbox" checked={hapticsEnabled} onChange={(event) => { onHapticsChange(event.target.checked); onAction(event.target.checked ? 'Vibration cues enabled' : 'Vibration cues muted', 'tap') }} /><i /></label><button className="text-button preferences-test" onClick={() => onAction('Feedback test complete', 'success')}><Icon name="spark" size={15} />Test feedback</button></div>
 }
 
-function DetailsDrawer({ item, onClose, onAction }: { item: DetailItem; onClose: () => void; onAction: (message: string) => void }) {
-  return <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><aside className="details-drawer" role="dialog" aria-modal="true" aria-labelledby="details-title"><div className="drawer-topline"><span className={`drawer-symbol drawer-symbol-${item.tone}`}><Icon name={item.icon} size={21} /></span><button className="icon-button ghost" aria-label="Close details" onClick={onClose}><Icon name="close" size={18} /></button></div><span className="eyebrow">{item.eyebrow}</span><h2 id="details-title">{item.title}</h2><p className="drawer-meta">{item.meta}</p><div className="drawer-facts">{item.facts.map((fact) => <div key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></div>)}</div>{item.timeline && <div className="drawer-timeline"><h3>Activity</h3>{item.timeline.map((event) => <div key={`${event.label}-${event.value}`}><i /><span><strong>{event.label}</strong><small>{event.value}</small></span></div>)}</div>}<div className="drawer-actions"><button className="button button-primary button-full" onClick={() => onAction(item.actionLabel ?? 'Full record opened')}><Icon name="arrow" size={16} />{item.actionLabel ?? 'Open full record'}</button><button className="button button-soft button-full" onClick={onClose}>Close details</button></div></aside></div>
+function DetailsDrawer({ item, onClose, onAction }: { item: DetailItem; onClose: () => void; onAction: (item: DetailItem) => void }) {
+  return <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><aside className="details-drawer" role="dialog" aria-modal="true" aria-labelledby="details-title"><div className="drawer-topline"><span className={`drawer-symbol drawer-symbol-${item.tone}`}><Icon name={item.icon} size={21} /></span><button className="icon-button ghost" aria-label="Close details" onClick={onClose}><Icon name="close" size={18} /></button></div><span className="eyebrow">{item.eyebrow}</span><h2 id="details-title">{item.title}</h2><p className="drawer-meta">{item.meta}</p><div className="drawer-facts">{item.facts.map((fact) => <div key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></div>)}</div>{item.timeline && <div className="drawer-timeline"><h3>Activity</h3>{item.timeline.map((event) => <div key={`${event.label}-${event.value}`}><i /><span><strong>{event.label}</strong><small>{event.value}</small></span></div>)}</div>}<div className="drawer-actions"><button className="button button-primary button-full" onClick={() => onAction(item)}><Icon name="arrow" size={16} />{item.actionLabel ?? 'Open full record'}</button><button className="button button-soft button-full" onClick={onClose}>Close details</button></div></aside></div>
 }
 
 function PatientOverview({ onAction }: { onAction: (message: string) => void }) {
@@ -677,9 +786,9 @@ function EmergencyPanel({ onEmergency, onOpenDetail }: { onEmergency: () => void
   return <section className="panel emergency-panel"><div className="panel-heading"><div><span className="eyebrow">Real-time triage</span><h2>Emergency status</h2></div><button className="text-button" onClick={() => onOpenDetail(emergencyDetail)}>View all <Icon name="arrow" size={15} /></button></div><div className="emergency-summary"><div className="gauge"><svg viewBox="0 0 140 85"><path className="gauge-track" d="M12 74a58 58 0 0 1 116 0" /><path className="gauge-value" d="M12 74a58 58 0 0 1 116 0" /></svg><strong>92<small>ED patients</small></strong></div><div className="emergency-legend"><span><i className="severity critical" />Critical <b>8</b></span><span><i className="severity serious" />Serious <b>21</b></span><span><i className="severity stable" />Stable <b>45</b></span><span><i className="severity observation" />Observation <b>18</b></span></div></div><button className="critical-callout" onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Critical care queue', meta: '2 patients waiting for an ICU bed', actionLabel: 'Open emergency access' })}><span><Icon name="alert" size={18} /></span><strong>2 critical patients waiting for ICU bed</strong><Icon name="arrow" size={17} /></button><div className="emergency-teams"><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Trauma team', meta: 'Trauma response team · On track', tone: 'mint' })}><strong>Trauma</strong><span><i />On track</span></button><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Stroke team', meta: 'Stroke response team · On track', tone: 'mint' })}><strong>Stroke</strong><span><i />On track</span></button><button onClick={() => onOpenDetail({ ...emergencyDetail, title: 'Cardiac team', meta: 'Cardiac response team · Needs attention', tone: 'coral' })}><strong>Cardiac</strong><span className="attention"><i />Needs attention</span></button></div><button className="emergency-panel-action button button-danger" onClick={onEmergency}><Icon name="alert" size={15} />Emergency access</button></section>
 }
 
-function ModuleView({ activeNav, rows, search, remoteMetrics, onAction, onEmergency, onOpenDetail }: { activeNav: string; rows: { label: string; meta: string; value: string; tone: string }[]; search: string; remoteMetrics: RemoteHealthMetric[]; onAction: (message: string, tone?: FeedbackTone) => void; onEmergency: () => void; onOpenDetail: (item: DetailItem) => void }) {
+function ModuleView({ activeNav, rows, search, remoteMetrics, demoMode, onAction, onLogMetric, onEmergency, onOpenDetail }: { activeNav: string; rows: { label: string; meta: string; value: string; tone: string }[]; search: string; remoteMetrics: RemoteHealthMetric[]; demoMode: boolean; onAction: (message: string, tone?: FeedbackTone) => void; onLogMetric: (type?: HealthMetricType) => void; onEmergency: () => void; onOpenDetail: (item: DetailItem) => void }) {
   const isEmergency = activeNav === 'Emergency'
-  if (activeNav === 'Health tracker') return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Personal health data</p><h1>Health tracker</h1><p className="page-subtitle">See your connected health signals, goals, and trends in one view.</p></div><div className="heading-actions"><button className="button button-primary" onClick={() => onAction('Health log opened', 'tap')}><Icon name="plus" size={18} />Log health data</button></div></div><HealthTracker remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} /></div>
+  if (activeNav === 'Health tracker') return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Personal health data</p><h1>Health tracker</h1><p className="page-subtitle">See your connected health signals, goals, and trends in one view.</p></div><div className="heading-actions"><button className="button button-primary" onClick={() => onLogMetric()}><Icon name="plus" size={18} />Log health data</button></div></div><HealthTracker remoteMetrics={remoteMetrics} demoMode={demoMode} onLogMetric={onLogMetric} onOpenDetail={onOpenDetail} /></div>
   return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and confidence.</p></div><div className="heading-actions"><button className="button button-primary" onClick={() => onAction(`${activeNav} creation flow opened`)}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div><div className="module-toolbar"><div className="module-count"><strong>{rows.length}</strong> active records {search && <span>matching “{search}”</span>}</div><div className="module-tools"><button className="button button-soft" onClick={() => onAction('Filters opened')}><Icon name="filter" size={17} />Filter</button><button className="button button-soft" onClick={() => onAction('Report export started')}><Icon name="download" size={17} />Export</button></div></div><section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row) => <button className="module-row" key={row.label} onClick={() => onOpenDetail({ eyebrow: activeNav, title: row.label, meta: row.meta, tone: row.tone === 'coral' ? 'coral' : row.tone === 'violet' ? 'violet' : row.tone === 'mint' ? 'mint' : 'cyan', icon: activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity', facts: [{ label: 'Status / value', value: row.value }, { label: 'Module', value: activeNav }, { label: 'Last updated', value: 'Just now' }], actionLabel: `Open ${row.label}` })}><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or clear the global search.</p></div>}</section></div>
 }
 

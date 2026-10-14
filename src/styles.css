@@ -311,3 +311,14 @@ html[data-theme='dark'] .health-metric:hover { background: #1b4037; }
 html[data-theme='dark'] .drawer-facts > div,
 html[data-theme='dark'] .drawer-timeline > div { border-color: #31564e; }
 html[data-theme='dark'] .critical-callout { background: #38222a; }
+
+.metric-history-list { display: grid; gap: 8px; max-height: 286px; margin-top: 13px; overflow-y: auto; }
+.metric-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 1px solid #e7edf4; border-radius: 9px; background: #fff; }
+.metric-history-row strong, .metric-history-row small { display: block; }
+.metric-history-row strong { color: var(--ink); font-size: 10px; }
+.metric-history-row small { margin-top: 4px; color: #8a97ab; font-size: 8px; }
+.metric-history-row b { color: var(--ink); font-size: 10px; white-space: nowrap; }
+.metric-entry-note { margin: 14px 0 3px; color: #7f8ca3; font-size: 10px; line-height: 1.5; }
+html[data-theme='dark'] .metric-history-row { border-color: #31564e; background: #16302b; }
+html[data-theme='dark'] .metric-history-row strong, html[data-theme='dark'] .metric-history-row b { color: #e1f2eb; }
+html[data-theme='dark'] .metric-history-row small, html[data-theme='dark'] .metric-entry-note { color: #a2bcb3; }

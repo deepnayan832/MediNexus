@@ -17,6 +17,8 @@ export type RemoteHealthMetric = {
   recordedAt: string
 }
 
+export type HealthMetricType = RemoteHealthMetric['metricType']
+
 export type RemoteAppointment = {
   id: string
   patientId: string
@@ -73,6 +75,13 @@ export function logout() {
 
 export function getHealthMetrics() {
   return request<{ metrics: RemoteHealthMetric[] }>('/api/health-metrics').then((result) => result.metrics)
+}
+
+export function createHealthMetric(input: { metricType: HealthMetricType; value: number; unit: string; goalValue?: number }) {
+  return request<{ metric: RemoteHealthMetric }>('/api/health-metrics', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }).then((result) => result.metric)
 }
 
 export function getAppointments() {

@@ -110,6 +110,18 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
     body: JSON.stringify({ metricType: 'steps', value: 7120, unit: 'steps', goalValue: 8000 }),
   })
   assert.equal(created.response.status, 201)
+  const createdMetric = created.body.metric as { id: string; value: number; unit: string }
+  assert.equal(createdMetric.value, 7120)
+  assert.equal(createdMetric.unit, 'steps')
+  const savedMetrics = await request('/api/health-metrics', { headers: { Cookie: cookie } })
+  assert.ok((savedMetrics.body.metrics as Array<{ id: string }>).some((metric) => metric.id === createdMetric.id))
+
+  const invalidMetricUnit = await request('/api/health-metrics', {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ metricType: 'steps', value: 7120, unit: 'km' }),
+  })
+  assert.equal(invalidMetricUnit.response.status, 422)
 
   const logout = await request('/api/auth/logout', { method: 'POST', headers: { Cookie: cookie } })
   assert.equal(logout.response.status, 200)
@@ -118,6 +130,76 @@ test('registers a patient, enforces RBAC, writes health data, and clears session
   const emptySession = await request('/api/auth/session', { headers: { Cookie: cookie } })
   assert.equal(emptySession.response.status, 200)
   assert.equal(emptySession.body.user, null)
+})
+
+test('clears stale sessions when a user signs in again', async () => {
+  const email = `relogin-${Date.now()}@example.test`
+  const first = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Relogin User', email, password: 'SufficientlyLong!42' }),
+  })
+  assert.equal(first.response.status, 201)
+  const firstCookie = (first.response.headers.get('set-cookie') ?? '').split(';')[0]
+
+  const second = await request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'SufficientlyLong!42' }),
+  })
+  assert.equal(second.response.status, 200)
+  const secondCookie = (second.response.headers.get('set-cookie') ?? '').split(';')[0]
+  assert.notEqual(firstCookie, secondCookie)
+
+  const oldSessionStillWorks = await request('/api/auth/session', { headers: { Cookie: firstCookie } })
+  assert.equal(oldSessionStillWorks.response.status, 200)
+  assert.equal(oldSessionStillWorks.body.user, null)
+
+  const currentSession = await request('/api/auth/session', { headers: { Cookie: secondCookie } })
+  assert.equal(currentSession.response.status, 200)
+  assert.ok(currentSession.body.user)
+})
+
+test('gives demo patients an upcoming appointment that appears in their appointment list', async () => {
+  const demoDirectory = await mkdtemp(join(tmpdir(), 'medinexus-demo-test-'))
+  const port = 10_000 + Math.floor(Math.random() * 300)
+  const demoUrl = `http://127.0.0.1:${port}`
+  const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs')
+  const demoServer = spawn(process.execPath, [tsxCli, 'server/index.ts'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      PORT: String(port),
+      MEDINEXUS_HOST: '127.0.0.1',
+      MEDINEXUS_CORS_ORIGIN: 'http://127.0.0.1:5173',
+      MEDINEXUS_DB_PATH: join(demoDirectory, 'demo.sqlite'),
+      MEDINEXUS_DEMO_DATA: 'true',
+    },
+    stdio: 'ignore',
+  })
+
+  try {
+    await waitForApi(demoUrl)
+    const registration = await fetch(`${demoUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { Origin: 'http://127.0.0.1:5173', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Demo Patient', email: `demo-${Date.now()}@example.test`, password: 'SufficientlyLong!42' }),
+    })
+    assert.equal(registration.status, 201)
+    const cookie = (registration.headers.get('set-cookie') ?? '').split(';')[0]
+    const appointmentsResponse = await fetch(`${demoUrl}/api/appointments`, { headers: { Cookie: cookie } })
+    assert.equal(appointmentsResponse.status, 200)
+    const body = await appointmentsResponse.json() as { appointments: Array<{ appointmentAt: string }> }
+    assert.ok(body.appointments.some((appointment) => Date.parse(appointment.appointmentAt) > Date.now()))
+  } finally {
+    if (demoServer.pid) {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(demoServer.pid), '/T', '/F'], { stdio: 'ignore' })
+      else demoServer.kill()
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    await rm(demoDirectory, { recursive: true, force: true })
+  }
 })
 
 test('rejects cross-origin writes', async () => {
@@ -219,4 +301,25 @@ test('rejects weak passwords for environment-provisioned privileged users', () =
   })
   assert.notEqual(result.status, 0, 'server must refuse weak provisioned credentials')
   assert.match((result.stderr || '') + (result.stdout || ''), /MEDINEXUS_ADMIN_PASSWORD must be at least 16 characters/)
+})
+
+test('rejects insecure additional CORS origins in production', () => {
+  const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs')
+  const result = spawnSync(process.execPath, [tsxCli, 'server/index.ts'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: '0',
+      MEDINEXUS_HOST: '127.0.0.1',
+      MEDINEXUS_DB_PATH: join(databaseDirectory, 'insecure-cors.sqlite'),
+      MEDINEXUS_PUBLIC_ORIGIN: 'https://medinexus.example.com',
+      MEDINEXUS_CORS_ORIGINS: 'http://frontend.example.com',
+      MEDINEXUS_DEMO_DATA: 'false',
+    },
+    encoding: 'utf8',
+    timeout: 5000,
+  })
+  assert.notEqual(result.status, 0, 'production must refuse insecure additional CORS origins')
+  assert.match((result.stderr || '') + (result.stdout || ''), /MEDINEXUS_CORS_ORIGINS must contain HTTPS origins/)
 })
