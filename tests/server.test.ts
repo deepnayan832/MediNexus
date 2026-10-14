@@ -587,3 +587,241 @@ test('allows user profile update and password change', async () => {
   })
   assert.equal(newLogin.response.status, 200)
 })
+
+test('enforces patient ownership (IDOR protection) on appointments, clinical notes, and insurance claims', async () => {
+  const staffCookie = await loginUser('staff@medinexus.test', 'StaffSecretPassword!42')
+  const doctorCookie = await loginUser('doctor@medinexus.test', 'DoctorSecretPassword!42')
+
+  // Register two distinct patients
+  const p1Reg = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Patient Alpha', email: `alpha-${Date.now()}@example.test`, password: 'AlphaSecretPassword!42' }),
+  })
+  assert.equal(p1Reg.response.status, 201)
+  const p1Cookie = (p1Reg.response.headers.get('set-cookie') ?? '').split(';')[0]
+
+  const p2Reg = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Patient Beta', email: `beta-${Date.now()}@example.test`, password: 'BetaSecretPassword!42' }),
+  })
+  assert.equal(p2Reg.response.status, 201)
+  const p2Cookie = (p2Reg.response.headers.get('set-cookie') ?? '').split(';')[0]
+
+  // Patient Alpha books an appointment
+  const aptRes = await request('/api/appointments', {
+    method: 'POST',
+    headers: { Cookie: p1Cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      department: 'Cardiology',
+      appointmentAt: '2026-10-25T10:00:00.000Z',
+      clinicianName: 'Dr. Elena Ruiz',
+    }),
+  })
+  assert.equal(aptRes.response.status, 201)
+  const apt = (aptRes.body as Record<string, unknown>).appointment as Record<string, unknown>
+  const aptId = String(apt.id)
+  const p1PatientId = String(apt.patientId)
+
+  // Patient Beta cannot view or cancel Patient Alpha's appointment
+  const idorGetApt = await request(`/api/appointments/${aptId}`, { headers: { Cookie: p2Cookie } })
+  assert.equal(idorGetApt.response.status, 403)
+
+  const idorCancelApt = await request(`/api/appointments/${aptId}`, {
+    method: 'PATCH',
+    headers: { Cookie: p2Cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'Cancelled' }),
+  })
+  assert.equal(idorCancelApt.response.status, 403)
+
+  // Patient Alpha can view and cancel their own appointment
+  const ownGetApt = await request(`/api/appointments/${aptId}`, { headers: { Cookie: p1Cookie } })
+  assert.equal(ownGetApt.response.status, 200)
+  const ownCancelApt = await request(`/api/appointments/${aptId}`, {
+    method: 'PATCH',
+    headers: { Cookie: p1Cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'Cancelled' }),
+  })
+  assert.equal(ownCancelApt.response.status, 200)
+  assert.equal(((ownCancelApt.body as Record<string, unknown>).appointment as Record<string, unknown>).status, 'Cancelled')
+
+  // Doctor writes clinical note for Patient Alpha; Patient Beta cannot read it
+  const noteRes = await request('/api/clinical-notes', {
+    method: 'POST',
+    headers: { Cookie: doctorCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      patientId: p1PatientId,
+      noteType: 'Progress Note',
+      subjective: 'Resting comfortably',
+      objective: 'BP 118/76',
+      assessment: 'Stable hypertension',
+      plan: 'Continue current regimen',
+    }),
+  })
+  assert.equal(noteRes.response.status, 201)
+
+  const idorNotes = await request(`/api/clinical-notes?patientId=${p1PatientId}`, { headers: { Cookie: p2Cookie } })
+  assert.equal(idorNotes.response.status, 403)
+
+  // Staff creates invoice for Patient Alpha; Patient Beta cannot file insurance claim for it
+  const invRes = await request('/api/billing', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      patientId: p1PatientId,
+      patientName: 'Patient Alpha',
+      description: 'Cardiology consult',
+      amount: 200,
+      insuranceCoverage: 150,
+      dueDate: '2026-11-20',
+    }),
+  })
+  assert.equal(invRes.response.status, 201)
+  const invoiceId = String(((invRes.body as Record<string, unknown>).invoice as Record<string, unknown>).id)
+
+  const idorClaim = await request('/api/insurance', {
+    method: 'POST',
+    headers: { Cookie: p2Cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      invoiceId,
+      patientId: p1PatientId,
+      providerName: 'Aetna',
+      policyNumber: 'AET-123',
+      claimAmount: 150,
+    }),
+  })
+  assert.equal(idorClaim.response.status, 403)
+
+  // Patient cannot access pharmacy inventory or admin audit logs
+  const medForbidden = await request('/api/medications', { headers: { Cookie: p1Cookie } })
+  assert.equal(medForbidden.response.status, 403)
+  const auditForbidden = await request('/api/audit-logs', { headers: { Cookie: p1Cookie } })
+  assert.equal(auditForbidden.response.status, 403)
+})
+
+test('enforces bed availability, prescription stock decrement, double-action prevention, and CSV formula sanitization', async () => {
+  const adminCookie = await loginUser('admin@medinexus.test', 'AdministratorSecret!42')
+  const doctorCookie = await loginUser('doctor@medinexus.test', 'DoctorSecretPassword!42')
+  const staffCookie = await loginUser('staff@medinexus.test', 'StaffSecretPassword!42')
+
+  // Create patient with formula-injection payload in allergies
+  const ptRes = await request('/api/patients', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Formula Test Patient',
+      department: 'Surgery',
+      allergies: '=CMD|\' /C calc\'!A0',
+    }),
+  })
+  assert.equal(ptRes.response.status, 201)
+  const patientId = String(((ptRes.body as Record<string, unknown>).patient as Record<string, unknown>).id)
+
+  // Verify CSV export neutralizes leading '=' with single quote
+  const csvRes = await request('/api/export/patients', { headers: { Cookie: adminCookie } })
+  assert.equal(csvRes.response.status, 200)
+  assert.ok(typeof csvRes.body === 'string' && csvRes.body.includes('"\'=CMD|'))
+
+  // Create bed and admit patient
+  const bedRes = await request('/api/beds', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ward: 'Ward D', roomNumber: '401', bedNumber: 'D-401', bedType: 'Standard' }),
+  })
+  const bedId = String(((bedRes.body as Record<string, unknown>).bed as Record<string, unknown>).id)
+
+  const adm1 = await request('/api/admissions', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patientId, bedId, admittingDoctor: 'Dr. Ruiz', diagnosis: 'Observation' }),
+  })
+  assert.equal(adm1.response.status, 201)
+  const admissionId = String(((adm1.body as Record<string, unknown>).admission as Record<string, unknown>).id)
+
+  // Second admission to already-occupied bed is rejected with 409
+  const admDuplicate = await request('/api/admissions', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patientId, bedId, admittingDoctor: 'Dr. Ruiz', diagnosis: 'Second admission' }),
+  })
+  assert.equal(admDuplicate.response.status, 409)
+
+  // Discharge once succeeds, discharging again returns 409
+  const dis1 = await request(`/api/admissions/${admissionId}/discharge`, { method: 'POST', headers: { Cookie: staffCookie } })
+  assert.equal(dis1.response.status, 200)
+  const dis2 = await request(`/api/admissions/${admissionId}/discharge`, { method: 'POST', headers: { Cookie: staffCookie } })
+  assert.equal(dis2.response.status, 409)
+
+  // Create medication with stock 10, prescribe, dispense, verify stock becomes 9, and second dispense returns 409
+  const medRes = await request('/api/medications', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Cefazolin 1g',
+      code: `CEF-${Date.now().toString().slice(-4)}`,
+      category: 'Antibiotics',
+      stockQuantity: 10,
+      unit: 'vials',
+      reorderLevel: 5,
+      unitPrice: 18,
+    }),
+  })
+  const medId = String(((medRes.body as Record<string, unknown>).medication as Record<string, unknown>).id)
+
+  const rxRes = await request('/api/prescriptions', {
+    method: 'POST',
+    headers: { Cookie: doctorCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      patientId,
+      medicationId: medId,
+      medicationName: 'Cefazolin 1g',
+      dosage: '1g IV',
+      frequency: 'Every 8 hours',
+      duration: '3 days',
+    }),
+  })
+  assert.equal(rxRes.response.status, 201)
+  const rxId = String(((rxRes.body as Record<string, unknown>).prescription as Record<string, unknown>).id)
+
+  const disp1 = await request(`/api/prescriptions/${rxId}/dispense`, { method: 'PATCH', headers: { Cookie: staffCookie } })
+  assert.equal(disp1.response.status, 200)
+
+  const disp2 = await request(`/api/prescriptions/${rxId}/dispense`, { method: 'PATCH', headers: { Cookie: staffCookie } })
+  assert.equal(disp2.response.status, 409)
+
+  const medsAfter = await request('/api/medications?search=Cefazolin', { headers: { Cookie: staffCookie } })
+  const updatedMed = ((medsAfter.body as Record<string, unknown>).medications as Array<Record<string, unknown>>).find((m) => m.id === medId)
+  assert.equal(updatedMed?.stockQuantity, 9)
+
+  // Admin can query audit logs
+  const logsRes = await request('/api/audit-logs?limit=10', { headers: { Cookie: adminCookie } })
+  assert.equal(logsRes.response.status, 200)
+  assert.ok(Array.isArray((logsRes.body as Record<string, unknown>).logs))
+})
+
+test('revokes other active sessions when a user changes their password', async () => {
+  const email = `session-revoke-${Date.now()}@example.test`
+  const regRes = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Session Tester', email, password: 'InitialPassword!123' }),
+  })
+  assert.equal(regRes.response.status, 201)
+  const session1Cookie = (regRes.response.headers.get('set-cookie') ?? '').split(';')[0]
+  const session2Cookie = await loginUser(email, 'InitialPassword!123')
+
+  // Change password using session1
+  const pwRes = await request('/api/auth/change-password', {
+    method: 'POST',
+    headers: { Cookie: session1Cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword: 'InitialPassword!123', newPassword: 'RotatedPassword!456' }),
+  })
+  assert.equal(pwRes.response.status, 200)
+
+  // session1 remains active, session2 is revoked
+  const me1 = await request('/api/auth/me', { headers: { Cookie: session1Cookie } })
+  assert.equal(me1.response.status, 200)
+  const me2 = await request('/api/auth/me', { headers: { Cookie: session2Cookie } })
+  assert.equal(me2.response.status, 401)
+})

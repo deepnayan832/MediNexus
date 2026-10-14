@@ -6,6 +6,7 @@ import { extname, resolve, sep } from 'node:path'
 import {
   audit,
   changeUserPassword,
+  checkDatabaseHealth,
   createAdmission,
   createAppointment,
   createAppointmentForPatient,
@@ -23,6 +24,7 @@ import {
   dischargeAdmission,
   dispensePrescription,
   exportTableToCsv,
+  getAdmissionById,
   getAppointmentById,
   getBedById,
   getDashboardSummary,
@@ -30,11 +32,15 @@ import {
   getInvoiceById,
   getLabOrderById,
   getMedicationById,
+  getMedicationByName,
   getPatientById,
+  getPatientByUserId,
+  getPrescriptionById,
   getStoredUserById,
   getUserByEmail,
   listAdmissions,
   listAppointments,
+  listAuditLogs,
   listBeds,
   listClinicalNotes,
   listEmergencyCases,
@@ -50,6 +56,7 @@ import {
   markNotificationRead,
   normalizeEmail,
   payInvoice,
+  revokeOtherUserSessions,
   updateAppointment,
   updateBedStatus,
   updateEmergencyCase,
@@ -59,7 +66,7 @@ import {
   updateUserProfile,
   verifyPassword,
 } from './db'
-import { clearSession, currentUser, requireRole, requireUser, sessionForUser } from './auth'
+import { clearSession, currentSessionTokenHash, currentUser, requireRole, requireUser, sessionForUser } from './auth'
 import { asNumber, asString, readJson, sendError, sendJson } from './http'
 import { SlidingWindowLimiter } from './rate-limit'
 
@@ -214,7 +221,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   if (request.method === 'GET' && path === '/api/health') {
-    sendJson(response, 200, { service: 'medinexus-api', status: 'ok', database: 'sqlite', timestamp: new Date().toISOString() })
+    const dbOk = checkDatabaseHealth()
+    sendJson(response, dbOk ? 200 : 503, {
+      service: 'medinexus-api',
+      status: dbOk ? 'ok' : 'degraded',
+      database: 'sqlite',
+      timestamp: new Date().toISOString(),
+    })
     return
   }
 
@@ -342,6 +355,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
         return
       }
       changeUserPassword(user.id, newPassword)
+      revokeOtherUserSessions(user.id, currentSessionTokenHash(request))
       audit(user.id, 'user.changed_password', 'user', user.id)
       sendJson(response, 200, { ok: true, message: 'Password successfully changed.' })
     } catch {
@@ -460,6 +474,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       sendError(response, 404, 'Appointment not found.', 'NOT_FOUND')
       return
     }
+    if (user.role === 'Patient') {
+      const patient = getPatientByUserId(user.id)
+      if (!patient || String(appointment.patientId) !== String(patient.id)) {
+        sendError(response, 403, 'You are not permitted to view this appointment.', 'FORBIDDEN')
+        return
+      }
+    }
     sendJson(response, 200, { appointment })
     return
   }
@@ -500,6 +521,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
         sendError(response, 422, 'patientId is required for clinician booking.', 'VALIDATION_ERROR')
         return
       }
+      if (!getPatientById(patientId)) {
+        sendError(response, 404, 'Patient not found.', 'NOT_FOUND')
+        return
+      }
       const room = asString(body.room, 40) || 'Room 301'
       const status = asString(body.status, 40) || 'Confirmed'
       const appointment = createAppointment({
@@ -538,6 +563,11 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
       // If user is Patient, they can only Cancel their own appointment
       if (user.role === 'Patient') {
+        const patient = getPatientByUserId(user.id)
+        if (!patient || String(current.patientId) !== String(patient.id)) {
+          sendError(response, 403, 'You are not permitted to modify this appointment.', 'FORBIDDEN')
+          return
+        }
         if (status !== 'Cancelled') {
           sendError(response, 403, 'Patients may only cancel appointments directly.', 'FORBIDDEN')
           return
@@ -602,6 +632,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
         return
       }
       const bed = updateBedStatus(bedId, status)
+      if (!bed) {
+        sendError(response, 404, 'Bed not found.', 'NOT_FOUND')
+        return
+      }
       audit(user.id, 'bed.updated_status', 'bed', bedId)
       sendJson(response, 200, { bed })
     } catch {
@@ -629,6 +663,19 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
         sendError(response, 422, 'Patient, bed, and diagnosis are required.', 'VALIDATION_ERROR')
         return
       }
+      if (!getPatientById(patientId)) {
+        sendError(response, 404, 'Patient not found.', 'NOT_FOUND')
+        return
+      }
+      const bed = getBedById(bedId)
+      if (!bed) {
+        sendError(response, 404, 'Bed not found.', 'NOT_FOUND')
+        return
+      }
+      if (bed.status !== 'Available') {
+        sendError(response, 409, `Bed is currently ${bed.status} and cannot accept a new admission.`, 'BED_UNAVAILABLE')
+        return
+      }
       const admission = createAdmission({ patientId, bedId, admittingDoctor, diagnosis })
       audit(user.id, 'admission.created', 'admission', String(admission?.id))
       sendJson(response, 201, { admission })
@@ -642,11 +689,16 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   if (request.method === 'POST' && dischargeMatch) {
     if (!requireRole(user, response, ['Admin', 'Doctor', 'Staff'])) return
     const admissionId = dischargeMatch[1]
-    const admission = dischargeAdmission(admissionId)
-    if (!admission) {
+    const existing = getAdmissionById(admissionId)
+    if (!existing) {
       sendError(response, 404, 'Admission not found.', 'NOT_FOUND')
       return
     }
+    if (existing.status === 'Discharged') {
+      sendError(response, 409, 'Patient has already been discharged for this admission.', 'ALREADY_DISCHARGED')
+      return
+    }
+    const admission = dischargeAdmission(admissionId)
     audit(user.id, 'admission.discharged', 'admission', admissionId)
     sendJson(response, 200, { admission })
     return
@@ -733,6 +785,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ------------------------------------------------------------------------- */
 
   if (request.method === 'GET' && path === '/api/medications') {
+    if (!requireRole(user, response, ['Admin', 'Doctor', 'Staff'])) return
     const search = asString(url.searchParams.get('search'), 100)
     const status = asString(url.searchParams.get('status'), 30)
     sendJson(response, 200, { medications: listMedications(search, status) })
@@ -751,8 +804,8 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       const reorderLevel = asNumber(body.reorderLevel) || 50
       const unitPrice = asNumber(body.unitPrice) || 0
 
-      if (!name || !code || !category || !Number.isFinite(stockQuantity)) {
-        sendError(response, 422, 'Name, unique code, category, and valid stock quantity are required.', 'VALIDATION_ERROR')
+      if (!name || !code || !category || !Number.isFinite(stockQuantity) || stockQuantity < 0) {
+        sendError(response, 422, 'Name, unique code, category, and valid non-negative stock quantity are required.', 'VALIDATION_ERROR')
         return
       }
       const med = createMedication({ name, code, category, stockQuantity, unit, reorderLevel, unitPrice })
@@ -771,11 +824,15 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       const medId = medMatch[1]
       const body = await readJson(request)
       const stockQuantity = asNumber(body.stockQuantity)
-      if (!Number.isFinite(stockQuantity)) {
-        sendError(response, 422, 'Valid stockQuantity is required.', 'VALIDATION_ERROR')
+      if (!Number.isFinite(stockQuantity) || stockQuantity < 0) {
+        sendError(response, 422, 'Valid non-negative stockQuantity is required.', 'VALIDATION_ERROR')
         return
       }
       const updated = updateMedicationStock(medId, stockQuantity)
+      if (!updated) {
+        sendError(response, 404, 'Medication not found.', 'NOT_FOUND')
+        return
+      }
       audit(user.id, 'medication.updated_stock', 'medication', medId)
       sendJson(response, 200, { medication: updated })
     } catch {
@@ -795,22 +852,31 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     try {
       const body = await readJson(request)
       const patientId = asString(body.patientId, 50)
-      const medicationId = asString(body.medicationId, 50)
-      const medicationName = asString(body.medicationName, 120)
+      const requestedMedicationId = asString(body.medicationId, 50)
+      const requestedMedicationName = asString(body.medicationName, 120)
       const dosage = asString(body.dosage, 80)
       const frequency = asString(body.frequency, 80)
       const duration = asString(body.duration, 80)
 
-      if (!patientId || !medicationId || !dosage || !frequency) {
+      if (!patientId || (!requestedMedicationId && !requestedMedicationName) || !dosage || !frequency) {
         sendError(response, 422, 'Patient, medication, dosage, and frequency are required.', 'VALIDATION_ERROR')
+        return
+      }
+      if (!getPatientById(patientId)) {
+        sendError(response, 404, 'Patient not found.', 'NOT_FOUND')
+        return
+      }
+      const matchedMed = (requestedMedicationId ? getMedicationById(requestedMedicationId) : null) ?? (requestedMedicationName ? getMedicationByName(requestedMedicationName) : null)
+      if (!matchedMed) {
+        sendError(response, 404, 'Medication not found in pharmacy catalog.', 'NOT_FOUND')
         return
       }
       const prescription = createPrescription({
         patientId,
         doctorId: user.id,
         doctorName: user.name,
-        medicationId,
-        medicationName,
+        medicationId: String(matchedMed.id),
+        medicationName: requestedMedicationName || String(matchedMed.name),
         dosage,
         frequency,
         duration: duration || '30 days',
@@ -827,6 +893,15 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   if (request.method === 'PATCH' && rxDispenseMatch) {
     if (!requireRole(user, response, ['Admin', 'Staff', 'Doctor'])) return
     const rxId = rxDispenseMatch[1]
+    const existing = getPrescriptionById(rxId)
+    if (!existing) {
+      sendError(response, 404, 'Prescription not found.', 'NOT_FOUND')
+      return
+    }
+    if (existing.status !== 'Active') {
+      sendError(response, 409, 'Prescription has already been dispensed or discontinued.', 'ALREADY_DISPENSED')
+      return
+    }
     const prescription = dispensePrescription(rxId)
     audit(user.id, 'prescription.dispensed', 'prescription', rxId)
     sendJson(response, 200, { prescription })
@@ -849,18 +924,23 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     try {
       const body = await readJson(request)
       const patientId = asString(body.patientId, 50)
-      const patientName = asString(body.patientName, 120)
+      const rawPatientName = asString(body.patientName, 120)
       const testType = asString(body.testType, 80)
       const priority = (asString(body.priority, 20) || 'Routine') as 'Routine' | 'Urgent' | 'Stat'
       const resultSummary = asString(body.resultSummary, 200)
 
-      if (!patientId || !patientName || !testType) {
+      if (!patientId || !testType) {
         sendError(response, 422, 'Patient and test type are required.', 'VALIDATION_ERROR')
+        return
+      }
+      const patient = getPatientById(patientId)
+      if (!patient) {
+        sendError(response, 404, 'Patient not found.', 'NOT_FOUND')
         return
       }
       const lab = createLabOrder({
         patientId,
-        patientName,
+        patientName: rawPatientName || String(patient.name),
         orderedByName: user.name,
         testType,
         priority,
@@ -914,17 +994,29 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     try {
       const body = await readJson(request)
       const patientId = asString(body.patientId, 50)
-      const patientName = asString(body.patientName, 120)
+      const rawPatientName = asString(body.patientName, 120)
       const description = asString(body.description, 200)
       const amount = asNumber(body.amount)
       const insuranceCoverage = asNumber(body.insuranceCoverage) || 0
       const dueDate = asString(body.dueDate, 30) || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
 
-      if (!patientId || !patientName || !description || !Number.isFinite(amount) || amount <= 0) {
+      if (!patientId || !description || !Number.isFinite(amount) || amount <= 0 || insuranceCoverage < 0) {
         sendError(response, 422, 'Patient, description, and positive amount are required.', 'VALIDATION_ERROR')
         return
       }
-      const invoice = createInvoice({ patientId, patientName, description, amount, insuranceCoverage, dueDate })
+      const patient = getPatientById(patientId)
+      if (!patient) {
+        sendError(response, 404, 'Patient not found.', 'NOT_FOUND')
+        return
+      }
+      const invoice = createInvoice({
+        patientId,
+        patientName: rawPatientName || String(patient.name),
+        description,
+        amount,
+        insuranceCoverage,
+        dueDate,
+      })
       audit(user.id, 'invoice.created', 'billing_invoice', String(invoice?.id))
       sendJson(response, 201, { invoice })
     } catch {
@@ -948,6 +1040,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
         return
       }
     }
+    if (invoice.status === 'Paid') {
+      sendError(response, 409, 'Invoice has already been paid.', 'ALREADY_PAID')
+      return
+    }
     const updated = payInvoice(invoiceId)
     audit(user.id, 'invoice.paid', 'billing_invoice', invoiceId)
     sendJson(response, 200, { invoice: updated })
@@ -968,9 +1064,25 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       const policyNumber = asString(body.policyNumber, 50)
       const claimAmount = asNumber(body.claimAmount)
 
-      if (!invoiceId || !patientId || !providerName || !policyNumber || !Number.isFinite(claimAmount)) {
-        sendError(response, 422, 'Invoice, patient, insurance provider, policy, and amount are required.', 'VALIDATION_ERROR')
+      if (!invoiceId || !patientId || !providerName || !policyNumber || !Number.isFinite(claimAmount) || claimAmount <= 0) {
+        sendError(response, 422, 'Invoice, patient, insurance provider, policy, and positive amount are required.', 'VALIDATION_ERROR')
         return
+      }
+      const invoice = getInvoiceById(invoiceId)
+      if (!invoice) {
+        sendError(response, 404, 'Invoice not found.', 'NOT_FOUND')
+        return
+      }
+      if (String(invoice.patientId) !== patientId) {
+        sendError(response, 422, 'Invoice does not belong to the specified patient.', 'VALIDATION_ERROR')
+        return
+      }
+      if (user.role === 'Patient') {
+        const patient = getPatientByUserId(user.id)
+        if (!patient || String(patient.id) !== patientId) {
+          sendError(response, 403, 'You are not permitted to submit an insurance claim for this patient.', 'FORBIDDEN')
+          return
+        }
       }
       const claim = createInsuranceClaim({ invoiceId, patientId, providerName, policyNumber, claimAmount })
       audit(user.id, 'insurance_claim.submitted', 'insurance_claim', String(claim?.id))
@@ -986,10 +1098,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ------------------------------------------------------------------------- */
 
   if (request.method === 'GET' && path === '/api/clinical-notes') {
-    const patientId = asString(url.searchParams.get('patientId'), 50)
-    if (!patientId) {
-      sendError(response, 422, 'patientId query parameter is required.', 'VALIDATION_ERROR')
-      return
+    const patientId = asString(url.searchParams.get('patientId'), 50) || undefined
+    if (user.role === 'Patient') {
+      const patient = getPatientByUserId(user.id)
+      if (patientId && (!patient || String(patient.id) !== patientId)) {
+        sendError(response, 403, 'You are not permitted to view clinical notes for this patient.', 'FORBIDDEN')
+        return
+      }
     }
     sendJson(response, 200, { notes: listClinicalNotes(patientId, user) })
     return
@@ -1008,6 +1123,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
       if (!patientId || !assessment || !plan) {
         sendError(response, 422, 'Patient, clinical assessment, and care plan are required.', 'VALIDATION_ERROR')
+        return
+      }
+      if (!getPatientById(patientId)) {
+        sendError(response, 404, 'Patient not found.', 'NOT_FOUND')
         return
       }
       const note = createClinicalNote({
@@ -1029,7 +1148,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   /* -------------------------------------------------------------------------
-     DATA EXPORT (CSV)
+     DATA EXPORT (CSV) & AUDIT LOGS
   ------------------------------------------------------------------------- */
 
   const exportMatch = path.match(/^\/api\/export\/([^/]+)$/)
@@ -1046,6 +1165,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     } catch {
       sendError(response, 400, 'Invalid export entity requested.', 'BAD_REQUEST')
     }
+    return
+  }
+
+  if (request.method === 'GET' && path === '/api/audit-logs') {
+    if (!requireRole(user, response, ['Admin'])) return
+    const limit = asNumber(url.searchParams.get('limit')) || 50
+    sendJson(response, 200, { logs: listAuditLogs(limit) })
     return
   }
 
