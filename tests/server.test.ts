@@ -320,6 +320,136 @@ test('staff and doctors manage patients, appointments, and clinical notes', asyn
   assert.equal(((completeAptRes.body as Record<string, unknown>).appointment as Record<string, unknown>).status, 'Completed')
 })
 
+test('prevents cross-patient appointment access and validates insurance claim ownership', async () => {
+  const suffix = Date.now()
+  async function registerPatient(label: string) {
+    const email = `security-${label}-${suffix}@example.test`
+    const result = await request('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `Security Patient ${label}`, email, password: 'SufficientlyLong!42' }),
+    })
+    assert.equal(result.response.status, 201)
+    return { email, cookie: (result.response.headers.get('set-cookie') ?? '').split(';')[0] }
+  }
+
+  const firstPatient = await registerPatient('one')
+  const secondPatient = await registerPatient('two')
+  const db = new DatabaseSync(join(databaseDirectory, 'test.sqlite'))
+  const findPatientId = (email: string) => {
+    const row = db.prepare(
+      'SELECT p.id AS id FROM patients p JOIN users u ON u.id = p.user_id WHERE u.email = ?',
+    ).get(email) as { id: string } | undefined
+    assert.ok(row, `patient profile should exist for ${email}`)
+    return row.id
+  }
+  const firstPatientId = findPatientId(firstPatient.email)
+  const secondPatientId = findPatientId(secondPatient.email)
+  db.close()
+
+  const doctorCookie = await loginUser('doctor@medinexus.test', 'DoctorSecretPassword!42')
+  const staffCookie = await loginUser('staff@medinexus.test', 'StaffSecretPassword!42')
+
+  const appointmentResult = await request('/api/appointments', {
+    method: 'POST',
+    headers: { Cookie: doctorCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      patientId: firstPatientId,
+      department: 'Cardiology',
+      appointmentAt: '2026-11-02T14:00:00.000Z',
+      clinicianName: 'Dr. Elena Ruiz',
+      notes: 'Authorization regression test',
+    }),
+  })
+  assert.equal(appointmentResult.response.status, 201)
+  const appointment = (appointmentResult.body as Record<string, unknown>).appointment as Record<string, unknown>
+  const appointmentId = String(appointment.id)
+
+  const crossPatientRead = await request(`/api/appointments/${appointmentId}`, {
+    headers: { Cookie: secondPatient.cookie },
+  })
+  assert.equal(crossPatientRead.response.status, 403)
+
+  const crossPatientCancel = await request(`/api/appointments/${appointmentId}`, {
+    method: 'PATCH',
+    headers: { Cookie: secondPatient.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'Cancelled' }),
+  })
+  assert.equal(crossPatientCancel.response.status, 403)
+
+  const ownerRead = await request(`/api/appointments/${appointmentId}`, {
+    headers: { Cookie: firstPatient.cookie },
+  })
+  assert.equal(ownerRead.response.status, 200)
+
+  const ownerCancel = await request(`/api/appointments/${appointmentId}`, {
+    method: 'PATCH',
+    headers: { Cookie: firstPatient.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'Cancelled' }),
+  })
+  assert.equal(ownerCancel.response.status, 200)
+  assert.equal(((ownerCancel.body as Record<string, unknown>).appointment as Record<string, unknown>).status, 'Cancelled')
+
+  const invoiceResult = await request('/api/billing', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      patientId: firstPatientId,
+      patientName: 'Security Patient one',
+      description: 'Authorization regression test invoice',
+      amount: 100,
+      insuranceCoverage: 80,
+      dueDate: '2026-11-30',
+    }),
+  })
+  assert.equal(invoiceResult.response.status, 201)
+  const invoice = (invoiceResult.body as Record<string, unknown>).invoice as Record<string, unknown>
+  const invoiceId = String(invoice.id)
+
+  const mismatchedClaim = await request('/api/insurance', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      invoiceId,
+      patientId: secondPatientId,
+      providerName: 'Example Health',
+      policyNumber: 'SECURITY-TEST-1',
+      claimAmount: 80,
+    }),
+  })
+  assert.equal(mismatchedClaim.response.status, 422)
+  assert.equal(
+    ((mismatchedClaim.body as Record<string, unknown>).error as Record<string, unknown>).code,
+    'PATIENT_INVOICE_MISMATCH',
+  )
+
+  const patientClaim = await request('/api/insurance', {
+    method: 'POST',
+    headers: { Cookie: firstPatient.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      invoiceId,
+      patientId: firstPatientId,
+      providerName: 'Example Health',
+      policyNumber: 'SECURITY-TEST-2',
+      claimAmount: 80,
+    }),
+  })
+  assert.equal(patientClaim.response.status, 403)
+
+  const validClaim = await request('/api/insurance', {
+    method: 'POST',
+    headers: { Cookie: staffCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      invoiceId,
+      patientId: firstPatientId,
+      providerName: 'Example Health',
+      policyNumber: 'SECURITY-TEST-3',
+      claimAmount: 80,
+    }),
+  })
+  assert.equal(validClaim.response.status, 201)
+})
+
 test('handles inpatient beds, admissions, and discharge flow', async () => {
   const staffCookie = await loginUser('staff@medinexus.test', 'StaffSecretPassword!42')
   const adminCookie = await loginUser('admin@medinexus.test', 'AdministratorSecret!42')

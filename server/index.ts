@@ -460,6 +460,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       sendError(response, 404, 'Appointment not found.', 'NOT_FOUND')
       return
     }
+    if (user.role === 'Patient') {
+      const patient = getPatientById(String(appointment.patientId))
+      if (!patient || patient.userId !== user.id) {
+        sendError(response, 403, 'You are not permitted to view this appointment.', 'FORBIDDEN')
+        return
+      }
+    }
     sendJson(response, 200, { appointment })
     return
   }
@@ -536,8 +543,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       const notes = asString(body.notes, 500) || undefined
       const appointmentAt = body.appointmentAt ? new Date(asString(body.appointmentAt, 40)).toISOString() : undefined
 
-      // If user is Patient, they can only Cancel their own appointment
+      // Patients may only cancel appointments that belong to their own patient profile.
       if (user.role === 'Patient') {
+        const patient = getPatientById(String(current.patientId))
+        if (!patient || patient.userId !== user.id) {
+          sendError(response, 403, 'You are not permitted to modify this appointment.', 'FORBIDDEN')
+          return
+        }
         if (status !== 'Cancelled') {
           sendError(response, 403, 'Patients may only cancel appointments directly.', 'FORBIDDEN')
           return
@@ -960,6 +972,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   if (request.method === 'POST' && path === '/api/insurance') {
+    if (!requireRole(user, response, ['Admin', 'Staff'])) return
     try {
       const body = await readJson(request)
       const invoiceId = asString(body.invoiceId, 50)
@@ -968,10 +981,31 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       const policyNumber = asString(body.policyNumber, 50)
       const claimAmount = asNumber(body.claimAmount)
 
-      if (!invoiceId || !patientId || !providerName || !policyNumber || !Number.isFinite(claimAmount)) {
-        sendError(response, 422, 'Invoice, patient, insurance provider, policy, and amount are required.', 'VALIDATION_ERROR')
+      if (!invoiceId || !patientId || !providerName || !policyNumber ||
+          !Number.isFinite(claimAmount) || claimAmount <= 0) {
+        sendError(response, 422, 'Invoice, patient, insurance provider, policy, and a positive claim amount are required.', 'VALIDATION_ERROR')
         return
       }
+
+      const invoice = getInvoiceById(invoiceId)
+      if (!invoice) {
+        sendError(response, 404, 'Invoice not found.', 'NOT_FOUND')
+        return
+      }
+      const patient = getPatientById(patientId)
+      if (!patient) {
+        sendError(response, 404, 'Patient not found.', 'NOT_FOUND')
+        return
+      }
+      if (String(invoice.patientId) !== patientId) {
+        sendError(response, 422, 'The invoice does not belong to the specified patient.', 'PATIENT_INVOICE_MISMATCH')
+        return
+      }
+      if (claimAmount > Number(invoice.amount)) {
+        sendError(response, 422, 'Claim amount cannot exceed the invoice total.', 'VALIDATION_ERROR')
+        return
+      }
+
       const claim = createInsuranceClaim({ invoiceId, patientId, providerName, policyNumber, claimAmount })
       audit(user.id, 'insurance_claim.submitted', 'insurance_claim', String(claim?.id))
       sendJson(response, 201, { claim })
