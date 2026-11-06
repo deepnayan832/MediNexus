@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { BentoGrid, BentoGridItem } from '@/components/ui/bento-grid'
 import {
   checkApiHealth,
   createAdmission,
@@ -930,6 +931,39 @@ function App() {
             <div className="heading-actions"><button className="button button-primary" onClick={() => setModal('appointment')}><Icon name="calendar" size={18} />{role === 'Patient' ? 'Book appointment' : 'New appointment'}</button><button className="button button-danger" onClick={() => setModal('emergency')}><Icon name="alert" size={18} />Emergency access</button></div>
           </div>
           <div className="kpi-grid">{kpis.map((kpi) => <KpiCard key={kpi.label} kpi={kpi} />)}</div>
+          <section className="bento-section" aria-labelledby="care-highlights-title">
+            <div className="bento-section-heading">
+              <div><span className="eyebrow">CONNECTED CARE</span><h2 id="care-highlights-title">Every workflow, in one view</h2></div>
+              <span>Workspace highlights</span>
+            </div>
+            <BentoGrid>
+              <BentoGridItem
+                className="bento-grid-item--wide"
+                title="A connected hospital workspace"
+                description="Appointments, patient records, admissions and clinical workflows come together in a single operational view."
+                icon={<Icon name="activity" size={17} />}
+                header={<div className="bento-art bento-art--care"><span className="bento-art__orbit" /><span className="bento-art__orbit" /><span className="bento-art__core" /><span className="bento-art__pulse" /></div>}
+              />
+              <BentoGridItem
+                title="Patient-first workflows"
+                description="Keep appointments, health metrics and care-plan activity easy to reach across the patient workspace."
+                icon={<Icon name="heart" size={17} />}
+                header={<div className="bento-art bento-art--clinical"><span className="bento-art__orbit" /><span className="bento-art__core" /></div>}
+              />
+              <BentoGridItem
+                title="Clinical visibility"
+                description="Surface schedule, patient flow and care-team activity without losing the wider operational context."
+                icon={<Icon name="reports" size={17} />}
+                header={<div className="bento-art bento-art--capacity"><span className="bento-art__bars">{Array.from({ length: 9 }, (_, index) => <span key={index} />)}</span></div>}
+              />
+              <BentoGridItem
+                title="Teams stay connected"
+                description="Role-based views help administrators, clinicians, staff and patients focus on the work relevant to them."
+                icon={<Icon name="people" size={17} />}
+                header={<div className="bento-art bento-art--teams"><span className="bento-art__orbit" /><span className="bento-art__orbit" /><span className="bento-art__core" /></div>}
+              />
+            </BentoGrid>
+          </section>
           {role === 'Patient' ? <PatientDashboard remoteMetrics={remoteHealthMetrics} onAction={handleAction} onOpenDetail={openDetail} onOpenLog={() => setModal('health_metric')} /> : <>
             <div className="main-grid">
               <section className="panel schedule-panel"><div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule ({liveAppointments.length})</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div><div className="schedule-list">{(liveAppointments.length ? liveAppointments : []).slice(0, showAllSchedule ? liveAppointments.length : 6).map((item) => { const dateStr = new Date(item.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); return <button key={item.id} className={`schedule-row ${selectedAppointment === item.id ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.id); openDetail({ eyebrow: 'Appointment', title: item.patientName || item.patientId, meta: `${dateStr} · ${item.department} · ${item.clinicianName}`, tone: 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: dateStr }, { label: 'Room', value: item.room }, { label: 'Clinician', value: item.clinicianName }, { label: 'Status', value: item.status }], actionLabel: item.status !== 'Completed' ? 'Mark Completed' : undefined, actionType: 'complete_appointment', rawId: item.id }); handleAction(`Appointment selected`, 'tap') }}><span className="schedule-time">{dateStr}</span><span className="schedule-dot dot-cyan" /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.patientName || item.patientId}</strong><small>{item.department} · {item.clinicianName}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button> })}</div></section>
