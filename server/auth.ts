@@ -43,4 +43,3 @@ export function requireRole(user: User, response: ServerResponse, roles: Role[])
   }
   return true
 }
-

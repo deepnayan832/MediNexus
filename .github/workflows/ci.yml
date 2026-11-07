@@ -1,8 +1,8 @@
-name: CI
+name: MediNexus CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "deploy/**", "fix/**", "feature/**"]
   pull_request:
     branches: [main]
 
@@ -12,28 +12,22 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
+      - name: Check out repository
+        uses: actions/checkout@v4
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Check server types
-        run: npm run server:check
-
-      - name: Run server tests
-        run: npm run test:server
-
-      - name: Build frontend
+      - name: Audit dependency vulnerabilities
+        run: npm audit --audit-level=high
+      - name: TypeScript and frontend build
         run: npm run build
-
-      - name: Compile production API
-        run: npm run server:build
-
+      - name: API tests
+        run: npm run test:server
+      - name: Build production container
+        run: docker build --tag medinexus:ci .
