@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useInView, useAnimate, Variants, motion } from 'framer-motion';
+import { useInView, useAnimation, Variants, motion } from 'framer-motion';
 import { designTokens } from '../design-tokens';
 
 // GSAP ScrollTrigger types (loaded dynamically)
@@ -96,7 +96,7 @@ export const useScrollReveal = (
       margin: rootMargin as any,
     amount: threshold,
   });
-    const [, animate] = useAnimate();
+    const controls = useAnimation();
   
   const defaultVariants: Variants = {
     hidden: { 
@@ -118,13 +118,13 @@ export const useScrollReveal = (
   
   useEffect(() => {
     if (isInView) {
-        animate('visible');
+        controls.start('visible');
     } else if (!triggerOnce) {
-        animate('hidden');
+        controls.start('hidden');
     }
-    }, [isInView, animate, triggerOnce]);
+    }, [isInView, controls, triggerOnce]);
   
-    return { ref, controls: animate, variants: variant || defaultVariants, isInView };
+    return { ref, controls, variants: variant || defaultVariants, isInView };
 };
 
 // Staggered children reveal
@@ -138,7 +138,7 @@ export const useStaggerReveal = <T extends HTMLElement = HTMLDivElement>(
   } = {}
 ): {
   ref: React.RefObject<T>;
-  controls: ReturnType<typeof useAnimate>[1];
+  controls: ReturnType<typeof useAnimation>;
   containerVariants: Variants;
   itemVariants: Variants;
   isInView: boolean;
@@ -146,8 +146,8 @@ export const useStaggerReveal = <T extends HTMLElement = HTMLDivElement>(
   const { threshold = 0.1, rootMargin = '0px 0px -50px 0px', staggerDelay = 0.1, delay = 0 } = options;
   
   const ref = useRef<T>(null);
-    const isInView = useInView(ref, { once: true, margin: rootMargin as any, amount: threshold });
-    const [, animate] = useAnimate();
+  const isInView = useInView(ref, { once: true, margin: rootMargin as any, amount: threshold });
+  const controls = useAnimation();
   
   const containerVariants: Variants = {
     hidden: { opacity: 0 },
@@ -168,18 +168,18 @@ export const useStaggerReveal = <T extends HTMLElement = HTMLDivElement>(
       scale: 1,
       transition: {
         duration: 0.6,
-          ease: designTokens.animation.easings.easeOutExpo as any,
+        ease: designTokens.animation.easings.easeOutExpo as any,
       },
     },
   };
   
   useEffect(() => {
     if (isInView) {
-        animate('visible');
+      controls.start('visible');
     }
-    }, [isInView, animate]);
+  }, [isInView, controls]);
   
-    return { ref, controls: animate, containerVariants, itemVariants, isInView };
+  return { ref, controls, containerVariants, itemVariants, isInView };
 };
 
 // Parallax scroll hook (Framer Motion)
@@ -355,7 +355,7 @@ export const useTextReveal = (text: string, options: { delay?: number; stagger?:
   const { delay = 0, stagger = 0.03 } = options;
   const ref = useRef<HTMLDivElement>(null);
   const isInView = useInView(ref, { once: true, margin: '0px 0px -50px 0px' as any });
-  const [, animate] = useAnimate();
+  const controls = useAnimation();
   
   const variants: Variants = {
     hidden: { opacity: 0 },
@@ -383,9 +383,9 @@ export const useTextReveal = (text: string, options: { delay?: number; stagger?:
   
   useEffect(() => {
     if (isInView) {
-      animate('visible');
+      controls.start('visible');
     }
-  }, [isInView, animate]);
+  }, [isInView, controls]);
   
   // Split text into characters
   const chars = text.split('').map((char, i) => (
