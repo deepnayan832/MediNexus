@@ -81,6 +81,12 @@ database.exec(`
     read_at TEXT,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS notification_reads (
+    notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    read_at TEXT NOT NULL,
+    PRIMARY KEY (notification_id, user_id)
+  );
   CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -319,17 +325,40 @@ export function createHealthMetric(input: { userId: string; metricType: string; 
 
 export function listNotifications(userId: string) {
   return database.prepare(`
-    SELECT id, title, body, kind, read_at AS readAt, created_at AS createdAt
-    FROM notifications WHERE user_id IS NULL OR user_id = ? ORDER BY created_at DESC LIMIT 50
-  `).all(userId) as Row[]
+    SELECT n.id, n.title, n.body, n.kind,
+      CASE
+        WHEN n.user_id IS NULL THEN nr.read_at
+        ELSE n.read_at
+      END AS readAt,
+      n.created_at AS createdAt
+    FROM notifications n
+    LEFT JOIN notification_reads nr ON n.user_id IS NULL AND nr.notification_id = n.id AND nr.user_id = ?
+    WHERE n.user_id IS NULL OR n.user_id = ?
+    ORDER BY n.created_at DESC
+    LIMIT 50
+  `).all(userId, userId) as Row[]
 }
 
 export function markNotificationRead(userId: string, notificationId: string) {
-  database.prepare(`UPDATE notifications SET read_at = ? WHERE id = ? AND (user_id IS NULL OR user_id = ?)`).run(now(), notificationId, userId)
+  const readAt = now()
+  database.prepare(`UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ?`).run(readAt, notificationId, userId)
+  database.prepare(`
+    INSERT INTO notification_reads (notification_id, user_id, read_at)
+    SELECT id, ?, ? FROM notifications WHERE id = ? AND user_id IS NULL
+    ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at = excluded.read_at
+  `).run(userId, readAt, notificationId)
 }
 
 export function markAllNotificationsRead(userId: string) {
-  database.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND (user_id IS NULL OR user_id = ?)`).run(now(), userId)
+  const readAt = now()
+  database.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND user_id = ?`).run(readAt, userId)
+  database.prepare(`
+    INSERT INTO notification_reads (notification_id, user_id, read_at)
+    SELECT n.id, ?, ? FROM notifications n
+    LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = ?
+    WHERE n.user_id IS NULL AND nr.read_at IS NULL
+    ON CONFLICT (notification_id, user_id) DO UPDATE SET read_at = excluded.read_at
+  `).run(userId, readAt, userId)
 }
 
 function seedCoreData() {
@@ -372,4 +401,3 @@ if (process.env.NODE_ENV !== 'production') seedCoreData()
 provisionUserFromEnvironment('ADMIN')
 provisionUserFromEnvironment('DOCTOR')
 provisionUserFromEnvironment('STAFF')
-

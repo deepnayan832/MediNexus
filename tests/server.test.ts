@@ -4,9 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
 
 let server: ChildProcess | undefined
 let databaseDirectory = ''
+let databasePath = ''
 let baseUrl = ''
 
 async function waitForApi(url: string) {
@@ -30,6 +32,7 @@ async function request(path: string, init: RequestInit = {}) {
 
 before(async () => {
   databaseDirectory = await mkdtemp(join(tmpdir(), 'medinexus-test-'))
+  databasePath = join(databaseDirectory, 'test.sqlite')
   const port = 8877 + Math.floor(Math.random() * 300)
   baseUrl = `http://127.0.0.1:${port}`
   const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs')
@@ -40,7 +43,7 @@ before(async () => {
       NODE_ENV: 'production',
       HOST: '0.0.0.0',
       PORT: String(port),
-      MEDINEXUS_DB_PATH: join(databaseDirectory, 'test.sqlite'),
+      MEDINEXUS_DB_PATH: databasePath,
       MEDINEXUS_CORS_ORIGIN: 'https://frontend.example',
     },
     stdio: 'ignore',
@@ -152,3 +155,47 @@ test('rejects unsafe registration and malformed health metrics', async () => {
   assert.deepEqual(invalidLogin.body.error, { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect.' })
 })
 
+test('tracks read state per user for shared notifications', async () => {
+  const first = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'First Patient', email: `first-${Date.now()}@example.test`, password: 'SufficientlyLong!42' }),
+  })
+  assert.equal(first.response.status, 201)
+  const firstCookie = (first.response.headers.get('set-cookie') ?? '').split(';')[0]
+
+  const second = await request('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Second Patient', email: `second-${Date.now()}@example.test`, password: 'SufficientlyLong!42' }),
+  })
+  assert.equal(second.response.status, 201)
+  const secondCookie = (second.response.headers.get('set-cookie') ?? '').split(';')[0]
+
+  const notificationId = `ntf_shared_${Date.now()}`
+  const database = new DatabaseSync(databasePath)
+  database.prepare('INSERT INTO notifications (id, user_id, title, body, kind, created_at) VALUES (?, NULL, ?, ?, ?, ?)').run(
+    notificationId,
+    'Shared notice',
+    'Shared body',
+    'info',
+    new Date().toISOString(),
+  )
+  database.close()
+
+  const markOneRead = await request(`/api/notifications/${notificationId}/read`, { method: 'POST', headers: { Cookie: firstCookie } })
+  assert.equal(markOneRead.response.status, 200)
+
+  const firstView = await request('/api/notifications', { headers: { Cookie: firstCookie } })
+  const secondView = await request('/api/notifications', { headers: { Cookie: secondCookie } })
+  const firstShared = (firstView.body.notifications as Array<Record<string, unknown>>).find((notification) => notification.id === notificationId)
+  const secondShared = (secondView.body.notifications as Array<Record<string, unknown>>).find((notification) => notification.id === notificationId)
+  assert.equal(typeof firstShared?.readAt, 'string')
+  assert.equal(secondShared?.readAt, null)
+
+  const secondReadAll = await request('/api/notifications/read-all', { method: 'POST', headers: { Cookie: secondCookie } })
+  assert.equal(secondReadAll.response.status, 200)
+  const secondAfterReadAll = await request('/api/notifications', { headers: { Cookie: secondCookie } })
+  const secondSharedAfterReadAll = (secondAfterReadAll.body.notifications as Array<Record<string, unknown>>).find((notification) => notification.id === notificationId)
+  assert.equal(typeof secondSharedAfterReadAll?.readAt, 'string')
+})
