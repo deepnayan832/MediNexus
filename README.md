@@ -1,63 +1,49 @@
 # MediNexus
 
-MediNexus is a premium, role-aware hospital management platform concept built around one connected care workspace. The current first slice establishes the visual system and the primary operations workflow in a responsive React + Vite app.
+MediNexus is a role-aware hospital management platform prototype built around one connected care workspace. It combines clinical and operational workflows in a responsive React + Vite frontend with a Node.js + SQLite API.
 
 ## Live Demo
 
 **GitHub Pages:** https://deepnayan832.github.io/MediNexus/
 
-The GitHub Pages site is a static frontend preview. The Node.js + SQLite API is a separate backend today. The Docker deployment described below serves the built frontend and API from one origin, keeping session cookies same-site; the existing GitHub Pages preview does not use that hosted backend.
+GitHub Pages hosts a static frontend preview; it does not connect to the separately hosted Node.js + SQLite API. The self-hosted Docker deployment below serves the frontend and API from one origin so session cookies remain same-site.
 
-## Current slice
+## Key Features & Capabilities
 
-- Role-aware Admin, Doctor, Staff, and Patient workspaces
-- Responsive app shell with mobile navigation
-- Operations dashboard with KPI cards, schedule, patient flow chart, team activity, and emergency status
-- Searchable module views for patients, appointments, beds, emergency, pharmacy, labs, billing, reports, and settings
-- Working appointment and emergency dialogs, role switching, notifications, chart range controls, row selection, detail drawers, toasts, and empty search state
-- Patient appointment requests saved to the API, validated against supported departments and future dates, and shown in the patient's appointment list
-- Patient health tracker with steps, heart rate, sleep, hydration, blood oxygen, weight, trend visualization, daily goals, and metric detail panels
-- Light/dark theme switching with device persistence, sound feedback, supported vibration cues, and a preferences panel
-- Accessible semantic controls, keyboard-visible focus, Escape-to-close dialogs/menus, ⌘/Ctrl+K search focus, and reduced-motion support
-- Node/SQLite API foundation with schema bootstrapping, registration/login/logout sessions, server-side role checks, audit logging, patient/appointment queries, notifications, and health-metric writes
-- Live API connection indicator with a graceful demo-data fallback when the API is not running
-- Authenticated Patient flow in the UI, session restoration, sign-out, RBAC-aware workspace switching, and API-backed health tracker values
+- **Role-aware workspaces:** Admin, Doctor, Staff, and Patient views with server-side role-based access control (RBAC).
+- **Patient management:** Demographics, medical history, allergies, emergency contacts, search, and status filtering.
+- **Appointment lifecycle:** Scheduling, confirmation, completion, and cancellation, with clinician and room assignments.
+- **Beds and admissions:** Ward and bed inventory, availability and occupancy status, inpatient admissions, and discharge workflows.
+- **Emergency triage:** Five-level Emergency Severity Index (ESI), vital signs, acuity prioritization, and clinical team assignment.
+- **Pharmacy and prescriptions:** Medication stock, prescribing, and dispensing workflows.
+- **Diagnostic labs:** Test ordering, priority tracking, and result recording.
+- **Billing and insurance:** Invoice creation, insurance coverage and patient-due calculations, claims, and payment settlement.
+- **Clinical notes:** Structured SOAP notes (Subjective, Objective, Assessment, Plan) linked to patients and providers.
+- **Live operational dashboards:** API-backed KPIs for patient activity, appointments, emergency cases, bed occupancy, lab orders, and revenue.
+- **Reports and exports:** Authorized server-side CSV exports for supported database tables.
+- **Patient health tracker:** Steps, heart rate, sleep, hydration, blood oxygen (SpO₂), and weight, with trend visualizations.
+- **Accessible interaction patterns:** Responsive navigation, keyboard-visible focus, Escape-to-close dialogs and menus, Ctrl/⌘+K search focus, and reduced-motion support.
+- **Security foundations:** HTTP-only session cookies, RBAC enforcement, security headers, origin checks, and authentication/registration rate limits.
 
-## Self-hosted deployment
+## Automated Verification
 
-The repository includes a Dockerfile and Docker Compose setup for hosting the **frontend and API on one origin**. Caddy handles HTTPS automatically after your domain's DNS points to the server. SQLite data is stored in a named Docker volume so app image rebuilds do not replace the database.
+The server test suite covers health and session endpoints, registration and login, privileged-account provisioning, patient and appointment workflows, admissions, emergency triage, pharmacy, diagnostics, billing, exports, and access-control boundaries.
 
-**Before starting:** point an A/AAAA record for your domain at the server, allow inbound TCP ports 80 and 443 (and optionally UDP 443), and install Docker Engine with the Compose plugin.
+Run the server tests:
 
-1. Copy `.env.example` to `.env`.
-2. Set `DOMAIN` to the real DNS name and `MEDINEXUS_PUBLIC_ORIGIN` to the matching `https://...` origin. Change the example values before running Compose.
-3. Set a strong password of at least 16 characters for the provisioned `MEDINEXUS_ADMIN_PASSWORD` and its email/name fields if you want an initial administrator. Keep all passwords in `.env`; never commit that file or use real patient credentials for a demo.
-4. Start the app:
-
-```sh
-docker compose up -d --build
-docker compose ps
-docker compose logs -f app
+```bash
+npm run test:server
 ```
 
-Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; only Caddy exposes ports 80 and 443. Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin. If a separate frontend origin is needed, add it to `MEDINEXUS_CORS_ORIGINS`; production accepts only HTTPS origins without paths or credentials.
+Run TypeScript checks and the production frontend build:
 
-Useful maintenance commands:
-
-```sh
-docker compose logs --tail=200 app
-docker compose pull caddy
-docker compose up -d --build
-docker compose down
+```bash
+npm run build
 ```
 
-The named `medinexus_data` volume persists the SQLite file across container recreation. Back it up regularly and test restoring a backup before updating the app. Do not run `docker compose down -v` unless you intentionally want to delete persistent volumes.
+## Run Locally
 
-**Authentication guardrails:** the API rate-limits login attempts (10 per client per minute by default) and registrations (5 per client per hour by default). The Compose deployment sets `MEDINEXUS_TRUST_PROXY=true` only behind Caddy, which overwrites `X-Forwarded-For` with the connecting client address. Do not enable trusted-proxy mode unless your own reverse proxy does the same. These in-memory limits are for a single instance and do not replace account lockout policy, monitoring, MFA, or a managed identity service.
-
-**Data and security boundary:** this is a portfolio/demo project, not a validated hospital information system. The current authorization and workflows are not sufficient for real patient records, clinical decisions, or regulated healthcare use. Use synthetic data only until the app has undergone a comprehensive security, privacy, operational, and clinical-safety review.
-
-## Run locally
+Install dependencies and start the frontend:
 
 ```bash
 npm install
@@ -70,26 +56,52 @@ In a second terminal, start the API:
 npm run server:start
 ```
 
-The API listens on `http://127.0.0.1:8787` by default and creates its local SQLite file at `data/medinexus.sqlite`. Copy `.env.example` to `.env` to configure the port, database path, CORS origin, or provisioned staff accounts. The `server:dev` and `server:start` scripts load `.env` before initializing the API and database. Never commit `.env` or production credentials. Production requires `MEDINEXUS_DB_PATH` to be an absolute path on persistent storage and never seeds synthetic patient records, sample appointments, or baseline health metrics.
+The API listens at `http://127.0.0.1:8787` by default and creates its SQLite database at `data/medinexus.sqlite`. Copy `.env.example` to `.env` to configure the port, database path, CORS origin, and optional provisioned staff accounts. The `server:dev` and `server:start` scripts load `.env` before initializing the API and database.
 
-Production build:
+Never commit `.env`, production credentials, or real patient data. In production, `MEDINEXUS_DB_PATH` must be an absolute path on persistent storage; production mode does not seed synthetic patient records, sample appointments, or baseline health metrics.
 
-```bash
-npm run build
+## Self-hosted Deployment
+
+The repository includes a Dockerfile and Docker Compose setup that host the frontend and API on one origin. Caddy provisions and renews HTTPS certificates after the domain's DNS points to the server. SQLite data is stored in a named Docker volume, so rebuilding the application image does not replace the database.
+
+### Before you start
+
+- Point an A/AAAA DNS record for your domain at the server.
+- Allow inbound TCP ports 80 and 443 (and optionally UDP 443) through the server firewall.
+- Install Docker Engine and the Docker Compose plugin.
+
+### Configure and start
+
+1. Copy `.env.example` to `.env`.
+2. Set `DOMAIN` to the real DNS name and `MEDINEXUS_PUBLIC_ORIGIN` to its matching HTTPS origin, for example `https://hospital.example.com`. Replace all example values before starting.
+3. If you want an initial administrator, set the administrator email/name and a strong `MEDINEXUS_ADMIN_PASSWORD` of at least 16 characters. Keep secrets in `.env`; never commit that file.
+4. Build and start the services:
+
+```sh
+docker compose up -d --build
+docker compose ps
+docker compose logs -f app
 ```
 
-Server workflow tests:
+Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; Caddy exposes ports 80 and 443.
 
-```bash
-npm run test:server
+Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin. If you intentionally use a separate frontend origin, add it to `MEDINEXUS_CORS_ORIGINS`; production accepts only HTTPS origins without paths or credentials.
+
+### Maintenance and backups
+
+Useful commands:
+
+```sh
+docker compose logs --tail=200 app
+docker compose pull caddy
+docker compose up -d --build
+docker compose down
 ```
 
-## Design direction
+The named `medinexus_data` volume persists the SQLite database across container recreation. Back it up regularly and test restoring a backup before updating the app. Do not run `docker compose down -v` unless you intentionally want to delete persistent volumes.
 
-The product uses a midnight navy navigation rail, a true-white and pale blue-gray workspace, electric cyan / violet accents, mint success states, and coral emergency signaling. The generated desktop concept used for the first implementation reference is saved at `public/concepts/medinexus-dashboard-concept.png`.
+### Authentication and security guardrails
 
-## Roadmap
+The API limits login attempts (10 per client per minute by default) and registrations (5 per client per hour by default). Compose enables `MEDINEXUS_TRUST_PROXY=true` only behind Caddy, which overwrites `X-Forwarded-For` with the connecting client address. Do not enable trusted-proxy mode unless your reverse proxy does the same. These in-memory limits are for a single instance and do not replace account-lockout policy, monitoring, multi-factor authentication, or a managed identity service.
 
-1. Connect the role-aware UI to authenticated API sessions and replace remaining demo dashboard fixtures with API data.
-2. Expand appointments, patient records, clinical notes, admissions, pharmacy, lab, billing, and insurance workflows.
-3. Add automated API/UI tests, migrations, production observability, and a managed relational database deployment.
+**Data and clinical-safety boundary:** MediNexus is a portfolio/demo project, not a validated hospital information system. Its authorization and workflows have not been validated for real patient records, clinical decisions, or regulated healthcare use. Use synthetic data only until the application has undergone comprehensive security, privacy, operational, and clinical-safety review.
