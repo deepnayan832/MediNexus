@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { motion } from 'framer-motion'
 import { BentoGrid, BentoGridItem } from '@/components/ui/bento-grid'
+import { Hero3DScene, Hero3DFallback } from '@/components/3d/Hero3D'
+import { GlassCard, GlassPanel, GlassButton, GlassNav, LiquidGlassBackground } from '@/components/ui/GlassComponents'
+import { useScrollReveal, useStaggerReveal, useReducedMotion, useParallax, useBreakpoint, useMagnetic } from '@/hooks/useScrollAnimations'
 import {
   checkApiHealth,
   createAdmission,
@@ -440,7 +444,12 @@ function App() {
   const workspaceRoles: Role[] = sessionUser ? [sessionUser.role] : (Object.keys(roleProfiles) as Role[])
   const isDashboard = activeNav === navItems[0].label
 
-  // Compute live KPIs
+    // Animation hooks
+    const reducedMotion = useReducedMotion()
+    const { ref: parallaxRef, style: parallaxStyle } = useParallax(0.3)
+    const { ref: heroParallaxRef, style: heroParallaxStyle } = useParallax(0.5)
+
+    // Compute live KPIs
   const kpis: Kpi[] = useMemo(() => {
     if (role === 'Patient') {
       const aptCount = dashboardSummary?.appointments ?? 3
@@ -905,71 +914,304 @@ function App() {
     </aside>
 
     <main className="main-area">
-      <header className="topbar">
-        <button className="mobile-menu icon-button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((open) => !open)}><Icon name={mobileNavOpen ? 'x' : 'menu'} size={22} /></button>
-        <div className="workspace-select-wrap">
-          <button className="workspace-select" onClick={() => setRoleOpen((open) => !open)} aria-expanded={roleOpen}><span className="workspace-select-icon"><Icon name={role === 'Patient' ? 'heart' : 'activity'} size={18} /></span><strong>{profile.workspace}</strong><Icon name="chevron" size={16} /></button>
-          {roleOpen && <div className="role-menu" role="menu"><span className="role-menu-title">{sessionUser ? 'Signed-in workspace' : 'Switch workspace'}</span>{workspaceRoles.map((item) => <button key={item} className={role === item ? 'selected' : ''} onClick={() => handleRoleChange(item)}><span className={`role-dot role-dot-${item.toLowerCase()}`} />{item}<small>{roleProfiles[item].workspace}</small>{role === item && <Icon name="check" size={16} />}</button>)}{sessionUser ? <button className="role-menu-action" onClick={handleSignOut}><Icon name="logout" size={15} />Sign out</button> : <button className="role-menu-action" onClick={() => { setAuthMode('login'); setAuthOpen(true); setRoleOpen(false) }}><Icon name="shield" size={15} />Sign in to care API</button>}</div>}
-        </div>
-        <label className="global-search"><Icon name="search" size={19} /><input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search patients, appointments, or records..." aria-label="Search patients, appointments, or records" /><kbd>⌘ K</kbd></label>
-        <span className={`api-status api-status-${apiStatus}`} aria-label={apiStatus === 'connected' ? 'MediNexus API connected' : apiStatus === 'offline' ? 'Using demo data because the MediNexus API is offline' : 'Checking MediNexus API connection'}><i />{apiStatus === 'connected' ? 'API connected' : apiStatus === 'offline' ? 'Demo data' : 'Connecting'}</span>
-        <div className="topbar-actions">
-          <button className="icon-button preference-trigger" aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); handleAction(`${theme === 'dark' ? 'Light' : 'Dark'} theme enabled`, 'tap') }}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} /></button>
-          <button className={`icon-button preference-trigger ${preferencesOpen ? 'active' : ''}`} aria-label="Open accessibility and feedback preferences" aria-expanded={preferencesOpen} onClick={() => setPreferencesOpen((open) => !open)}><Icon name="settings" size={19} /></button>
-          <button className={`notification-button icon-button ${notificationsOpen ? 'active' : ''}`} aria-label="Open notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Icon name="bell" size={21} />{unreadCount > 0 ? <span className="notification-badge">{unreadCount}</span> : <span />}</button>
-          <div className="topbar-divider" />
-          <button className="profile-trigger" aria-label={`Switch workspace, current ${profile.workspace}`} aria-expanded={roleOpen} onClick={() => setRoleOpen((open) => !open)}><span className={`avatar avatar-large avatar-${profile.initials.toLowerCase()}`}>{profile.initials}</span><span className="profile-copy"><strong>{profile.name}</strong><small>{profile.title}</small></span><Icon name="chevron" size={16} /></button>
-        </div>
-        {preferencesOpen && <PreferencesPanel theme={theme} soundEnabled={soundEnabled} hapticsEnabled={hapticsEnabled} onThemeChange={setTheme} onSoundChange={setSoundEnabled} onHapticsChange={setHapticsEnabled} onAction={handleAction} />}
-        {notificationsOpen && <div className="notification-panel"><div className="panel-heading"><div><span className="eyebrow">Inbox</span><h2>Notifications ({notifications.length})</h2></div><button className="text-button" onClick={() => { markAllNotificationsRead().then(() => { refreshData(); handleAction('All notifications marked read', 'success') }) }}>Mark all read</button></div>{notifications.length ? notifications.map((n) => <div key={n.id} className={`notification-item ${!n.readAt ? 'unread' : ''}`} onClick={() => { markNotificationRead(n.id).then(refreshData) }}><span className={`notification-symbol notification-symbol-${n.kind === 'alert' ? 'coral' : n.kind === 'success' ? 'mint' : 'cyan'}`}><Icon name={n.kind === 'alert' ? 'alert' : n.kind === 'success' ? 'check' : 'flask'} size={17} /></span><div><strong>{n.title}</strong><p>{n.body}</p><small>{new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div></div>) : <div className="empty-state" style={{ padding: '20px' }}><span><Icon name="check" size={20} /></span><p>No new alerts.</p></div>}</div>}
-      </header>
+          {/* GlassNav Topbar */}
+          <GlassNav
+            variant="liquid"
+            elevation={2}
+            className="topbar"
+            leftContent={
+              <>
+                <button className="mobile-menu icon-button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((open) => !open)}>
+                  <Icon name={mobileNavOpen ? 'x' : 'menu'} size={22} />
+                </button>
+                <div className="workspace-select-wrap">
+                  <button className="workspace-select" onClick={() => setRoleOpen((open) => !open)} aria-expanded={roleOpen}>
+                    <span className="workspace-select-icon"><Icon name={role === 'Patient' ? 'heart' : 'activity'} size={18} /></span>
+                    <strong>{profile.workspace}</strong>
+                    <Icon name="chevron" size={16} />
+                  </button>
+                  {roleOpen && <div className="role-menu" role="menu"><span className="role-menu-title">{sessionUser ? 'Signed-in workspace' : 'Switch workspace'}</span>{workspaceRoles.map((item) => <button key={item} className={role === item ? 'selected' : ''} onClick={() => handleRoleChange(item)}><span className={`role-dot role-dot-${item.toLowerCase()}`} />{item}<small>{roleProfiles[item].workspace}</small>{role === item && <Icon name="check" size={16} />}</button>)}{sessionUser ? <button className="role-menu-action" onClick={handleSignOut}><Icon name="logout" size={15} />Sign out</button> : <button className="role-menu-action" onClick={() => { setAuthMode('login'); setAuthOpen(true); setRoleOpen(false) }}><Icon name="shield" size={15} />Sign in to care API</button>}</div>}
+                </div>
+              </>
+            }
+            centerContent={
+              <label className="global-search"><Icon name="search" size={19} /><input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search patients, appointments, or records..." aria-label="Search patients, appointments, or records" /><kbd>⌘ K</kbd></label>
+            }
+            rightContent={
+              <>
+                <span className={`api-status api-status-${apiStatus}`} aria-label={apiStatus === 'connected' ? 'MediNexus API connected' : apiStatus === 'offline' ? 'Using demo data because the MediNexus API is offline' : 'Checking MediNexus API connection'}><i />{apiStatus === 'connected' ? 'API connected' : apiStatus === 'offline' ? 'Demo data' : 'Connecting'}</span>
+                <div className="topbar-actions">
+                  <button className="icon-button preference-trigger" aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); handleAction(`${theme === 'dark' ? 'Light' : 'Dark'} theme enabled`, 'tap') }}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={19} /></button>
+                  <button className={`icon-button preference-trigger ${preferencesOpen ? 'active' : ''}`} aria-label="Open accessibility and feedback preferences" aria-expanded={preferencesOpen} onClick={() => setPreferencesOpen((open) => !open)}><Icon name="settings" size={19} /></button>
+                  <button className={`notification-button icon-button ${notificationsOpen ? 'active' : ''}`} aria-label="Open notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Icon name="bell" size={21} />{unreadCount > 0 ? <span className="notification-badge">{unreadCount}</span> : <span />}</button>
+                  <div className="topbar-divider" />
+                  <button className="profile-trigger" aria-label={`Switch workspace, current ${profile.workspace}`} aria-expanded={roleOpen} onClick={() => setRoleOpen((open) => !open)}><span className={`avatar avatar-large avatar-${profile.initials.toLowerCase()}`}>{profile.initials}</span><span className="profile-copy"><strong>{profile.name}</strong><small>{profile.title}</small></span><Icon name="chevron" size={16} /></button>
+                </div>
+              </>
+            }
+          />
+          {preferencesOpen && <PreferencesPanel theme={theme} soundEnabled={soundEnabled} hapticsEnabled={hapticsEnabled} onThemeChange={setTheme} onSoundChange={setSoundEnabled} onHapticsChange={setHapticsEnabled} onAction={handleAction} />}
+          {notificationsOpen && <div className="notification-panel"><div className="panel-heading"><div><span className="eyebrow">Inbox</span><h2>Notifications ({notifications.length})</h2></div><button className="text-button" onClick={() => { markAllNotificationsRead().then(() => { refreshData(); handleAction('All notifications marked read', 'success') }) }}>Mark all read</button></div>{notifications.length ? notifications.map((n) => <div key={n.id} className={`notification-item ${!n.readAt ? 'unread' : ''}`} onClick={() => { markNotificationRead(n.id).then(refreshData) }}><span className={`notification-symbol notification-symbol-${n.kind === 'alert' ? 'coral' : n.kind === 'success' ? 'mint' : 'cyan'}`}><Icon name={n.kind === 'alert' ? 'alert' : n.kind === 'success' ? 'check' : 'flask'} size={17} /></span><div><strong>{n.title}</strong><p>{n.body}</p><small>{new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></div></div>) : <div className="empty-state" style={{ padding: '20px' }}><span><Icon name="check" size={20} /></span><p>No new alerts.</p></div>}</div>}
 
-      <section className="page-content">
-        {isDashboard ? <>
-          <div className="page-heading">
-            <div><h1>Good morning, {profile.name}</h1><p className="page-subtitle">{role === 'Patient' ? 'Your care plan, appointments, and next steps in one place.' : "Here is today's care overview"}</p></div>
-            <div className="heading-actions"><button className="button button-primary" onClick={() => setModal('appointment')}><Icon name="calendar" size={18} />{role === 'Patient' ? 'Book appointment' : 'New appointment'}</button><button className="button button-danger" onClick={() => setModal('emergency')}><Icon name="alert" size={18} />Emergency access</button></div>
-          </div>
-          <div className="kpi-grid">{kpis.map((kpi) => <KpiCard key={kpi.label} kpi={kpi} />)}</div>
-          <section className="bento-section" aria-labelledby="care-highlights-title">
-            <div className="bento-section-heading">
-              <div><span className="eyebrow">CONNECTED CARE</span><h2 id="care-highlights-title">Every workflow, in one view</h2></div>
-              <span>Workspace highlights</span>
-            </div>
-            <BentoGrid>
-              <BentoGridItem
-                className="bento-grid-item--wide"
-                title="A connected hospital workspace"
-                description="Appointments, patient records, admissions and clinical workflows come together in a single operational view."
-                icon={<Icon name="activity" size={17} />}
-                header={<div className="bento-art bento-art--care"><span className="bento-art__orbit" /><span className="bento-art__orbit" /><span className="bento-art__core" /><span className="bento-art__pulse" /></div>}
-              />
-              <BentoGridItem
-                title="Patient-first workflows"
-                description="Keep appointments, health metrics and care-plan activity easy to reach across the patient workspace."
-                icon={<Icon name="heart" size={17} />}
-                header={<div className="bento-art bento-art--clinical"><span className="bento-art__orbit" /><span className="bento-art__core" /></div>}
-              />
-              <BentoGridItem
-                title="Clinical visibility"
-                description="Surface schedule, patient flow and care-team activity without losing the wider operational context."
-                icon={<Icon name="reports" size={17} />}
-                header={<div className="bento-art bento-art--capacity"><span className="bento-art__bars">{Array.from({ length: 9 }, (_, index) => <span key={index} />)}</span></div>}
-              />
-              <BentoGridItem
-                title="Teams stay connected"
-                description="Role-based views help administrators, clinicians, staff and patients focus on the work relevant to them."
-                icon={<Icon name="people" size={17} />}
-                header={<div className="bento-art bento-art--teams"><span className="bento-art__orbit" /><span className="bento-art__orbit" /><span className="bento-art__core" /></div>}
-              />
-            </BentoGrid>
-          </section>
+      <section className="page-content" style={{ position: 'relative' }}>
+                          <LiquidGlassBackground animated={!reducedMotion} className="page-bg" style={parallaxStyle} />
+              {isDashboard ? <>
+                {/* 3D Hero Section */}
+                <div className="hero-3d-section" style={{ position: 'relative', overflow: 'hidden' }}>
+                                        <LiquidGlassBackground animated={!reducedMotion} style={heroParallaxStyle} />
+                  <Hero3DScene 
+                    isDark={theme === 'dark'} 
+                    className="hero-3d-canvas"
+                    onLoad={() => {}}
+                  />
+                  <Hero3DFallback isDark={theme === 'dark'} className="hero-3d-fallback" />
+            
+                  {/* Glassmorphism Hero Content Overlay */}
+                  <div className="hero-content" style={{ 
+                    position: 'relative', 
+                    zIndex: 10,
+                    padding: 'clamp(48px, 8vw, 80px) clamp(24px, 5vw, 48px)',
+                    maxWidth: '1400px',
+                    margin: '0 auto',
+                  }}>
+                    <motion.div
+                      initial={{ opacity: 0, y: 30 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+                      style={{ maxWidth: '800px' }}
+                    >
+                      <span className="eyebrow" style={{ 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '8px',
+                        padding: '6px 14px',
+                        borderRadius: '9999px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        background: theme === 'dark' 
+                          ? 'rgba(25, 197, 209, 0.15)' 
+                          : 'rgba(25, 197, 209, 0.1)',
+                        color: theme === 'dark' ? '#19c5d1' : '#0e8a96',
+                        border: theme === 'dark' 
+                          ? '1px solid rgba(25, 197, 209, 0.3)' 
+                          : '1px solid rgba(25, 197, 209, 0.2)',
+                        backdropFilter: 'blur(8px)',
+                        WebkitBackdropFilter: 'blur(8px)',
+                      }}>
+                        <span style={{ 
+                          width: '6px', 
+                          height: '6px', 
+                          borderRadius: '50%', 
+                          background: '#19c5d1',
+                          animation: 'pulse 2s ease-in-out infinite',
+                        }} />
+                        Connected Care Platform
+                      </span>
+                      <motion.h1
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.7, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                        style={{
+                          fontSize: 'clamp(2.5rem, 5vw, 4rem)',
+                          fontWeight: 800,
+                          lineHeight: 1.1,
+                          letterSpacing: '-0.02em',
+                          marginTop: '16px',
+                          marginBottom: '16px',
+                          color: theme === 'dark' ? '#ffffff' : '#0a1a2f',
+                          background: theme === 'dark' 
+                            ? 'linear-gradient(135deg, #ffffff 0%, #19c5d1 50%, #7561ee 100%)'
+                            : 'linear-gradient(135deg, #0a1a2f 0%, #19c5d1 50%, #7561ee 100%)',
+                          WebkitBackgroundClip: 'text',
+                          WebkitTextFillColor: 'transparent',
+                          backgroundClip: 'text',
+                        }}
+                      >
+                        Good morning, {profile.name}
+                      </motion.h1>
+                      <motion.p
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.7, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                        className="page-subtitle"
+                        style={{
+                          fontSize: 'clamp(1rem, 1.5vw, 1.25rem)',
+                          lineHeight: 1.6,
+                          color: theme === 'dark' ? 'rgba(255, 255, 255, 0.7)' : 'rgba(10, 26, 47, 0.7)',
+                          maxWidth: '600px',
+                          marginBottom: '32px',
+                        }}
+                      >
+                        {role === 'Patient' 
+                          ? 'Your care plan, appointments, and next steps in one place.' 
+                          : "Here is today's care overview — appointments, patient flow, and team activity unified."
+                        }
+                      </motion.p>
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.7, delay: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                        style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}
+                      >
+                        <GlassButton 
+                          variant="liquid" 
+                          size="lg"
+                          onClick={() => setModal('appointment')}
+                          leftIcon={<Icon name="calendar" size={18} />}
+                        >
+                          {role === 'Patient' ? 'Book appointment' : 'New appointment'}
+                        </GlassButton>
+                        <GlassButton 
+                          variant="frosted" 
+                          size="lg"
+                          onClick={() => setModal('emergency')}
+                          leftIcon={<Icon name="alert" size={18} />}
+                        >
+                          Emergency access
+                        </GlassButton>
+                      </motion.div>
+                    </motion.div>
+                  </div>
+            
+                                      <style>{`
+                    @keyframes pulse {
+                      0%, 100% { opacity: 1; transform: scale(1); }
+                      50% { opacity: 0.5; transform: scale(1.1); }
+                    }
+                    .hero-3d-section {
+                      min-height: clamp(400px, 60vh, 600px);
+                      max-height: 70vh;
+                    }
+                    .hero-3d-canvas {
+                      width: 100%;
+                      height: 100%;
+                      min-height: clamp(400px, 60vh, 600px);
+                    }
+                    .hero-3d-fallback {
+                      width: 100%;
+                      height: 100%;
+                      min-height: clamp(400px, 60vh, 600px);
+                    }
+                    .hero-content {
+                      height: 100%;
+                      display: flex;
+                      align-items: center;
+                      justify-content: flex-start;
+                    }
+                  `}</style>
+                </div>
+          
+                {/* KPI Grid with Scroll Reveal */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: '-50px' }}
+                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                  className="kpi-grid"
+                  style={{ 
+                    position: 'relative', 
+                    zIndex: 10,
+                    marginTop: '-40px',
+                    padding: '0 clamp(24px, 5vw, 48px)',
+                    maxWidth: '1400px',
+                    marginLeft: 'auto',
+                    marginRight: 'auto',
+                  }}
+                >
+                  {kpis.map((kpi, index) => (
+                    <motion.div
+                      key={kpi.label}
+                      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                      whileInView={{ opacity: 1, y: 0, scale: 1 }}
+                      viewport={{ once: true, margin: '-50px' }}
+                      transition={{ duration: 0.5, delay: index * 0.08, ease: [0.16, 1, 0.3, 1] }}
+                    >
+                      <KpiCard kpi={kpi} />
+                    </motion.div>
+                  ))}
+                </motion.div>
+          
+                {/* Bento Section with Stagger Reveal */}
+                <motion.section
+                  initial={{ opacity: 0, y: 30 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: '-100px' }}
+                  transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+                  className="bento-section"
+                  aria-labelledby="care-highlights-title"
+                  style={{ 
+                    position: 'relative', 
+                    zIndex: 10,
+                    padding: 'clamp(32px, 5vw, 48px) clamp(24px, 5vw, 48px)',
+                    maxWidth: '1400px',
+                    marginLeft: 'auto',
+                    marginRight: 'auto',
+                  }}
+                >
+                  <div className="bento-section-heading">
+                    <div><span className="eyebrow">CONNECTED CARE</span><h2 id="care-highlights-title">Every workflow, in one view</h2></div>
+                    <span>Workspace highlights</span>
+                  </div>
+                  <BentoGrid>
+                    <BentoGridItem
+                      className="bento-grid-item--wide"
+                      title="A connected hospital workspace"
+                      description="Appointments, patient records, admissions and clinical workflows come together in a single operational view."
+                      icon={<Icon name="activity" size={17} />}
+                      header={<div className="bento-art bento-art--care"><span className="bento-art__orbit" /><span className="bento-art__orbit" /><span className="bento-art__core" /><span className="bento-art__pulse" /></div>} />
+                    <BentoGridItem
+                      title="Patient-first workflows"
+                      description="Keep appointments, health metrics and care-plan activity easy to reach across the patient workspace."
+                      icon={<Icon name="heart" size={17} />}
+                      header={<div className="bento-art bento-art--clinical"><span className="bento-art__orbit" /><span className="bento-art__core" /></div>} />
+                    <BentoGridItem
+                      title="Clinical visibility"
+                      description="Surface schedule, patient flow and care-team activity without losing the wider operational context."
+                      icon={<Icon name="reports" size={17} />}
+                      header={<div className="bento-art bento-art--capacity"><span className="bento-art__bars">{Array.from({ length: 9 }, (_, index) => <span key={index} />)}</span></div>} />
+                    <BentoGridItem
+                      title="Teams stay connected"
+                      description="Role-based views help administrators, clinicians, staff and patients focus on the work relevant to them."
+                      icon={<Icon name="people" size={17} />}
+                      header={<div className="bento-art bento-art--teams"><span className="bento-art__orbit" /><span className="bento-art__orbit" /><span className="bento-art__core" /></div>} />
+                  </BentoGrid>
+                </motion.section>
           {role === 'Patient' ? <PatientDashboard remoteMetrics={remoteHealthMetrics} onAction={handleAction} onOpenDetail={openDetail} onOpenLog={() => setModal('health_metric')} /> : <>
-            <div className="main-grid">
-              <section className="panel schedule-panel"><div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule ({liveAppointments.length})</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div><div className="schedule-list">{(liveAppointments.length ? liveAppointments : []).slice(0, showAllSchedule ? liveAppointments.length : 6).map((item) => { const dateStr = new Date(item.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); return <button key={item.id} className={`schedule-row ${selectedAppointment === item.id ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.id); openDetail({ eyebrow: 'Appointment', title: item.patientName || item.patientId, meta: `${dateStr} · ${item.department} · ${item.clinicianName}`, tone: 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: dateStr }, { label: 'Room', value: item.room }, { label: 'Clinician', value: item.clinicianName }, { label: 'Status', value: item.status }], actionLabel: item.status !== 'Completed' ? 'Mark Completed' : undefined, actionType: 'complete_appointment', rawId: item.id }); handleAction(`Appointment selected`, 'tap') }}><span className="schedule-time">{dateStr}</span><span className="schedule-dot dot-cyan" /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.patientName || item.patientId}</strong><small>{item.department} · {item.clinicianName}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button> })}</div></section>
-              <section className="panel flow-panel"><div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div><div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div><FlowChart range={range} /><div className="flow-insights"><div><Icon name="people" size={22} /><strong>{dashboardSummary?.openEmergency ?? 18}<small>Currently in ED</small></strong><span className="insight-bad">▲ Active</span></div><div><Icon name="bed" size={22} /><strong>{dashboardSummary?.criticalEmergency ?? 3}<small>Waiting for bed</small></strong><span className="insight-bad">▲ Critical</span></div><div><Icon name="clock" size={22} /><strong>28 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ Fast track</span></div><div><Icon name="arrow" size={22} /><strong>14<small>Discharges today</small></strong><span className="insight-good">▲ Target met</span></div></div></section>
-            </div>
-            <div className="bottom-grid"><section className="panel activity-panel"><div className="panel-heading"><div><span className="eyebrow">Across the network</span><h2>Care team activity</h2></div><button className="text-button" onClick={() => openDetail({ eyebrow: 'Network Activity', title: 'Live Clinical Activity', meta: 'Real-time telemetry and clinical events', tone: 'cyan', icon: 'activity', facts: [{ label: 'Status', value: 'Nominal' }, { label: 'Audit Records', value: 'Encrypted & active' }] })}>View all <Icon name="arrow" size={15} /></button></div><div className="activity-list"><div className="activity-row"><span className="avatar avatar-cyan">ER</span><span className="activity-time">Just now</span><div className="activity-copy"><strong>Dr. Elena Ruiz</strong><small>Signed cardiology consultation note</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-mint">JW</span><span className="activity-time">8 min ago</span><div className="activity-copy"><strong>James Wilson</strong><small>Assigned patient to Ward A bed 102</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-coral">ED</span><span className="activity-time">14 min ago</span><div className="activity-copy"><strong>Triage Team</strong><small>Admitted Level 2 cardiac emergency</small></div><span className="status status-attention">In Treatment</span></div></div></section><EmergencyPanel onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} /></div>
+                      <motion.div
+                        initial={{ opacity: 0, y: 30 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true, margin: '-100px' }}
+                        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+                        className="main-grid"
+                      >
+                        <GlassCard variant="default" elevation={2} className="panel schedule-panel">
+                          <div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule ({liveAppointments.length})</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div>
+                          <div className="schedule-list">{(liveAppointments.length ? liveAppointments : []).slice(0, showAllSchedule ? liveAppointments.length : 6).map((item) => { const dateStr = new Date(item.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); return <button key={item.id} className={`schedule-row ${selectedAppointment === item.id ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.id); openDetail({ eyebrow: 'Appointment', title: item.patientName || item.patientId, meta: `${dateStr} · ${item.department} · ${item.clinicianName}`, tone: 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: dateStr }, { label: 'Room', value: item.room }, { label: 'Clinician', value: item.clinicianName }, { label: 'Status', value: item.status }], actionLabel: item.status !== 'Completed' ? 'Mark Completed' : undefined, actionType: 'complete_appointment', rawId: item.id }); handleAction(`Appointment selected`, 'tap') }}><span className="schedule-time">{dateStr}</span><span className="schedule-dot dot-cyan" /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.patientName || item.patientId}</strong><small>{item.department} · {item.clinicianName}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button> })}</div>
+                        </GlassCard>
+                        <GlassCard variant="default" elevation={2} className="panel flow-panel">
+                          <div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div>
+                          <div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div>
+                          <FlowChart range={range} />
+                          <div className="flow-insights"><div><Icon name="people" size={22} /><strong>{dashboardSummary?.openEmergency ?? 18}<small>Currently in ED</small></strong><span className="insight-bad">▲ Active</span></div><div><Icon name="bed" size={22} /><strong>{dashboardSummary?.criticalEmergency ?? 3}<small>Waiting for bed</small></strong><span className="insight-bad">▲ Critical</span></div><div><Icon name="clock" size={22} /><strong>28 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ Fast track</span></div><div><Icon name="arrow" size={22} /><strong>14<small>Discharges today</small></strong><span className="insight-good">▲ Target met</span></div></div>
+                        </GlassCard>
+                      </motion.div>
+                      <motion.div
+                        initial={{ opacity: 0, y: 30 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true, margin: '-100px' }}
+                        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+                        className="bottom-grid"
+                      >
+                        <GlassCard variant="default" elevation={2} className="panel activity-panel">
+                          <div className="panel-heading"><div><span className="eyebrow">Across the network</span><h2>Care team activity</h2></div><button className="text-button" onClick={() => openDetail({ eyebrow: 'Network Activity', title: 'Live Clinical Activity', meta: 'Real-time telemetry and clinical events', tone: 'cyan', icon: 'activity', facts: [{ label: 'Status', value: 'Nominal' }, { label: 'Audit Records', value: 'Encrypted & active' }] })}>View all <Icon name="arrow" size={15} /></button></div>
+                          <div className="activity-list"><div className="activity-row"><span className="avatar avatar-cyan">ER</span><span className="activity-time">Just now</span><div className="activity-copy"><strong>Dr. Elena Ruiz</strong><small>Signed cardiology consultation note</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-mint">JW</span><span className="activity-time">8 min ago</span><div className="activity-copy"><strong>James Wilson</strong><small>Assigned patient to Ward A bed 102</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-coral">ED</span><span className="activity-time">14 min ago</span><div className="activity-copy"><strong>Triage Team</strong><small>Admitted Level 2 cardiac emergency</small></div><span className="status status-attention">In Treatment</span></div></div>
+                        </GlassCard>
+                        <GlassCard variant="default" elevation={2} className="panel emergency-panel">
+                          <EmergencyPanel onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} />
+                        </GlassCard>
+                      </motion.div>
           </>}
         </> : <ModuleView
           activeNav={activeNav}
@@ -1114,16 +1356,35 @@ function ModuleView({
   onOpenDetail: (item: DetailItem) => void
 }) {
   const isEmergency = activeNav === 'Emergency' || activeNav === 'Queue management'
+  const { ref: staggerRef, controls: rowControls, containerVariants, itemVariants, isInView: rowsIsInView } = useStaggerReveal<HTMLDivElement>(rows.length, { staggerDelay: 0.05 })
+    const createBtnRef = useMagnetic<HTMLButtonElement>(0.3)
+    const emergencyBtnRef = useMagnetic<HTMLButtonElement>(0.3)
+
   if (activeNav === 'Health tracker') {
     return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Personal health data</p><h1>Health tracker</h1><p className="page-subtitle">See your connected health signals, goals, and trends in one view.</p></div><div className="heading-actions"><button className="button button-primary" onClick={onOpenCreateModal}><Icon name="plus" size={18} />Log health data</button></div></div><HealthTracker remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} onOpenLog={onOpenCreateModal} /></div>
   }
 
   const filterOptions = ['All', 'Stable', 'Confirmed', 'Completed', 'In stock', 'Low stock', 'Active', 'Paid', 'Pending']
 
-  return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and confidence.</p></div><div className="heading-actions"><button className="button button-primary" onClick={onOpenCreateModal}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div>
-    <div className="module-toolbar"><div className="module-count"><strong>{rows.length}</strong> active records {search && <span>matching “{search}”</span>}</div><div className="module-tools"><button className={`button ${showFilterBar ? 'button-primary' : 'button-soft'}`} onClick={onToggleFilterBar}><Icon name="filter" size={17} />Filter</button><button className="button button-soft" onClick={onExport}><Icon name="download" size={17} />Export CSV</button></div></div>
+  return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and confidence.</p></div><div className="heading-actions"><button className="button button-primary" ref={createBtnRef} onClick={onOpenCreateModal}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" ref={emergencyBtnRef} onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div>
+    <div className="module-toolbar"><div className="module-count"><strong>{rows.length}</strong> active records {search && <span>matching "{search}"</span>}</div><div className="module-tools"><button className={`button ${showFilterBar ? 'button-primary' : 'button-soft'}`} onClick={onToggleFilterBar}><Icon name="filter" size={17} />Filter</button><button className="button button-soft" onClick={onExport}><Icon name="download" size={17} />Export CSV</button></div></div>
     {showFilterBar && <div className="filter-bar">{filterOptions.map((opt) => <button key={opt} className={`filter-pill ${statusFilter === opt ? 'active' : ''}`} onClick={() => onStatusFilterChange(opt)}>{opt}</button>)}</div>}
-    <section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row) => <button className="module-row" key={row.id} onClick={() => onOpenDetail(row.detail)}><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or reset your filter.</p></div>}</section>
+    <motion.div
+              ref={staggerRef}
+              animate={rowsIsInView ? 'visible' : 'hidden'}
+              variants={containerVariants}
+              initial="hidden"
+              style={{ width: '100%' }}
+            >
+              <GlassCard variant="default" elevation={1}>
+                <section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row, index) => <motion.button
+                    key={row.id}
+                    variants={itemVariants}
+                    className="module-row"
+                    onClick={() => onOpenDetail(row.detail)}
+                  ><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></motion.button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or reset your filter.</p></div>}</section>
+              </GlassCard>
+                </motion.div>
   </div>
 }
 
