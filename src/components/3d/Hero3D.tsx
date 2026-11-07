@@ -312,6 +312,20 @@ function MedicalNetwork({ position = [0, 0, 0], scale = 1 }: { position?: [numbe
     const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
     linesRef.current.push(lines);
     group.add(lines);
+    return () => {
+      group.children.forEach((object) => {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Line) {
+          object.geometry.dispose();
+        }
+        if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Sprite) {
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          materials.forEach((material) => material.dispose());
+        }
+      });
+      group.clear();
+      nodesRef.current = [];
+      linesRef.current = [];
+    };
   }, [scale]);
 
   return <group ref={groupRef} position={position} />;
