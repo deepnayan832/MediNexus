@@ -209,13 +209,13 @@ export const animation = {
   },
   easings: {
     linear: 'linear',
-    easeIn: 'cubic-bezier(0.4, 0, 1, 1)',
-    easeOut: 'cubic-bezier(0, 0, 0.2, 1)',
-    easeInOut: 'cubic-bezier(0.4, 0, 0.2, 1)',
-      easeOutExpo: 'cubic-bezier(0.19, 1, 0.22, 1)',
-      easeOutBack: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
-      spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
-      bounce: 'cubic-bezier(0.68, -0.55, 0.265, 1.55)',
+    easeIn: [0.4, 0, 1, 1] as [number, number, number, number],
+    easeOut: [0, 0, 0.2, 1] as [number, number, number, number],
+    easeInOut: [0.4, 0, 0.2, 1] as [number, number, number, number],
+    easeOutExpo: [0.19, 1, 0.22, 1] as [number, number, number, number],
+    easeOutBack: [0.34, 1.56, 0.64, 1] as [number, number, number, number],
+    spring: [0.34, 1.56, 0.64, 1] as [number, number, number, number],
+    bounce: [0.68, -0.55, 0.265, 1.55] as [number, number, number, number]
     },
 };
 
