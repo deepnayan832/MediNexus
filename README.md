@@ -1,107 +1,118 @@
 # MediNexus
 
-MediNexus is a role-aware hospital management platform prototype built around one connected care workspace. It combines clinical and operational workflows in a responsive React + Vite frontend with a Node.js + SQLite API.
+MediNexus is an early hospital workflow prototype built with React, TypeScript, Vite, a Node.js HTTP API, and SQLite. It demonstrates role-aware dashboards and a small authenticated API. It is not a clinical system and must not be used with real patient information.
 
-## Live Demo
+## Current capabilities and limits
 
-**GitHub Pages:** https://deepnayan832.github.io/MediNexus/
+- The responsive dashboard, role switching, many module screens, and much of the patient view use synthetic demo content in the frontend.
+- The API supports registration, login, logout, session lookup, limited patient and appointment reads, notifications, and patient health-metric writes.
+- Production mode does not seed sample patient records or generate sample appointments and health metrics for new accounts.
+- The application does not yet provide a complete clinical workflow, verified identity, email verification, password recovery, MFA, authentication rate limiting, a managed database adapter, or a compliance program.
 
-GitHub Pages hosts a static frontend preview; it does not connect to the separately hosted Node.js + SQLite API. The self-hosted Docker deployment below serves the frontend and API from one origin so session cookies remain same-site.
+Do not store protected health information or make care decisions from this prototype. Security improvements in this repository do not establish HIPAA, GDPR, or other regulatory compliance.
 
-## Key Features & Capabilities
+## Architecture
 
-- **Role-aware workspaces:** Admin, Doctor, Staff, and Patient views with server-side role-based access control (RBAC).
-- **Patient management:** Demographics, medical history, allergies, emergency contacts, search, and status filtering.
-- **Appointment lifecycle:** Scheduling, confirmation, completion, and cancellation, with clinician and room assignments.
-- **Beds and admissions:** Ward and bed inventory, availability and occupancy status, inpatient admissions, and discharge workflows.
-- **Emergency triage:** Five-level Emergency Severity Index (ESI), vital signs, acuity prioritization, and clinical team assignment.
-- **Pharmacy and prescriptions:** Medication stock, prescribing, and dispensing workflows.
-- **Diagnostic labs:** Test ordering, priority tracking, and result recording.
-- **Billing and insurance:** Invoice creation, insurance coverage and patient-due calculations, claims, and payment settlement.
-- **Clinical notes:** Structured SOAP notes (Subjective, Objective, Assessment, Plan) linked to patients and providers.
-- **Live operational dashboards:** API-backed KPIs for patient activity, appointments, emergency cases, bed occupancy, lab orders, and revenue.
-- **Reports and exports:** Authorized server-side CSV exports for supported database tables.
-- **Patient health tracker:** Steps, heart rate, sleep, hydration, blood oxygen (SpO₂), and weight, with trend visualizations.
-- **Accessible interaction patterns:** Responsive navigation, keyboard-visible focus, Escape-to-close dialogs and menus, Ctrl/⌘+K search focus, and reduced-motion support.
-- **Security foundations:** HTTP-only session cookies, RBAC enforcement, security headers, origin checks, and authentication/registration rate limits.
-
-## Automated Verification
-
-The server test suite covers health and session endpoints, registration and login, privileged-account provisioning, patient and appointment workflows, admissions, emergency triage, pharmacy, diagnostics, billing, exports, and access-control boundaries.
-
-Run the server tests:
-
-```bash
-npm run test:server
+```text
+Browser
+  └─ HTTPS static frontend (Vite build in dist/)
+       └─ HTTPS API (Node.js, /api/*)
+            └─ SQLite file on persistent storage
 ```
 
-Run TypeScript checks and the production frontend build:
+The frontend and API can share an origin or run on separate HTTPS origins. `VITE_API_URL` selects the API base at frontend build time. SQLite is suitable only for a single API instance on storage that persists across restarts and deployments. Use a database migration before scaling to multiple API instances or using ephemeral filesystems.
+
+## Requirements
+
+- Node.js 22.12 or later. The server uses Node's built-in `node:sqlite` module.
+- npm, included with Node.js.
+
+## Local development
 
 ```bash
-npm run build
+npm ci
 ```
 
-## Run Locally
+Optionally copy `.env.example` to `.env`. The frontend reads Vite variables from `.env`; `npm run server:dev` also loads that file using Node's environment-file support.
 
-Install dependencies and start the frontend:
+Start the frontend and API in separate terminals:
 
 ```bash
-npm install
 npm run dev
+npm run server:dev
 ```
 
-In a second terminal, start the API:
+The frontend is served by Vite, normally at `http://localhost:5173`. The API defaults to `http://127.0.0.1:8787`; Vite proxies `/api` to it. Local SQLite data defaults to `data/medinexus.sqlite`.
+
+## Environment variables
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `VITE_API_URL` | Frontend build | API origin, such as `https://api.example.com`. Leave blank to call `/api` on the frontend's origin. This value is public in the generated browser code; never put secrets in a `VITE_` variable. |
+| `PORT` | API | Port to listen on. Defaults to `8787` locally; production hosting should provide it. |
+| `HOST` | API | Optional bind host. Defaults to `127.0.0.1` in development and `0.0.0.0` in production. |
+| `NODE_ENV` | API | Set to `production` on the deployed API to enable production checks and secure cookies. |
+| `MEDINEXUS_CORS_ORIGIN` | API | Exact frontend origin(s). Separate multiple origins with commas; production entries must use HTTPS. Wildcards are rejected. |
+| `MEDINEXUS_DB_PATH` | API | SQLite path. The local default is `data/medinexus.sqlite`. Production requires an absolute path on persistent storage. |
+| `MEDINEXUS_ADMIN_EMAIL`, `MEDINEXUS_ADMIN_PASSWORD`, `MEDINEXUS_ADMIN_NAME` | API | Optional first-start Admin account provisioning. Keep credentials in the host's secret settings. |
+| `MEDINEXUS_DOCTOR_EMAIL`, `MEDINEXUS_DOCTOR_PASSWORD`, `MEDINEXUS_DOCTOR_NAME` | API | Optional first-start Doctor account provisioning. |
+| `MEDINEXUS_STAFF_EMAIL`, `MEDINEXUS_STAFF_PASSWORD`, `MEDINEXUS_STAFF_NAME` | API | Optional first-start Staff account provisioning. |
+
+The API reads `.env` when started by the provided server scripts. Hosting platforms should set backend variables in their private environment settings. `VITE_API_URL` is read while building the frontend, so changing it requires a new frontend build.
+
+## Database and persistence
+
+SQLite is initialized automatically when the API starts. The path is resolved from the process working directory when relative. In production, startup fails unless `MEDINEXUS_DB_PATH` is set to an absolute path; point it at a persistent disk or volume mounted by the API host. A container's writable layer or a static frontend host is not persistent storage.
+
+Run one API instance against a SQLite file. Back up the database and verify restores before using persistent data. For multiple API instances, high availability, or a host without persistent volumes, migrate the database layer to a managed database such as PostgreSQL; `DATABASE_URL` is not currently supported and changing the environment variable alone will not migrate the application.
+
+## Tests and builds
 
 ```bash
-npm run server:start
+npm run server:check
+npm run test:server
+npm run build
+npm run server:build
 ```
 
-The API listens at `http://127.0.0.1:8787` by default and creates its SQLite database at `data/medinexus.sqlite`. Copy `.env.example` to `.env` to configure the port, database path, CORS origin, and optional provisioned staff accounts. The `server:dev` and `server:start` scripts load `.env` before initializing the API and database.
+`npm run build` type-checks the frontend, Vite configuration, and server, then creates the static site in `dist/`. `npm run server:build` compiles the API to `dist-server/`. The compiled API starts with `npm run server:start` (or `npm start`); it does not use the Vite server or `tsx watch`.
 
-Never commit `.env`, production credentials, or real patient data. In production, `MEDINEXUS_DB_PATH` must be an absolute path on persistent storage; production mode does not seed synthetic patient records, sample appointments, or baseline health metrics.
+## Deployment
 
-## Self-hosted Deployment
+No provider-specific deployment file is included. Deploy the frontend to an HTTPS static hosting service and the API to a Node.js service that supports Node 22.12+, a dynamic `PORT`, and persistent storage for SQLite.
 
-The repository includes a Dockerfile and Docker Compose setup that host the frontend and API on one origin. Caddy provisions and renews HTTPS certificates after the domain's DNS points to the server. SQLite data is stored in a named Docker volume, so rebuilding the application image does not replace the database.
+### API service
 
-### Before you start
+1. Set the runtime to Node.js 22.12 or later.
+2. Build with `npm ci && npm run server:build`.
+3. Start with `npm run server:start` or `npm start`.
+4. Set `NODE_ENV=production`, the platform-provided `PORT`, and `MEDINEXUS_DB_PATH` to an absolute filename on a persistent volume, such as `/var/lib/medinexus/medinexus.sqlite`.
+5. Set `MEDINEXUS_CORS_ORIGIN` to the exact HTTPS frontend origin, for example `https://app.example.com`. Comma-separated HTTPS origins are supported.
+6. Add provisioned account credentials only through the host's secret settings, if those roles are required.
+7. Configure the host's health probe to request `GET /api/health`.
 
-- Point an A/AAAA DNS record for your domain at the server.
-- Allow inbound TCP ports 80 and 443 (and optionally UDP 443) through the server firewall.
-- Install Docker Engine and the Docker Compose plugin.
+### Frontend service
 
-### Configure and start
+1. Build with `npm ci && npm run build`.
+2. Publish the `dist/` directory at the site's root.
+3. For a separate API service, set the build-time variable `VITE_API_URL` to its HTTPS origin, for example `https://api.example.com`, then rebuild. Keep it blank only when `/api` is routed to the API on the same origin.
+4. Open the deployed site's root URL and check that the API status indicator reports a connection.
 
-1. Copy `.env.example` to `.env`.
-2. Set `DOMAIN` to the real DNS name and `MEDINEXUS_PUBLIC_ORIGIN` to its matching HTTPS origin, for example `https://hospital.example.com`. Replace all example values before starting.
-3. If you want an initial administrator, set the administrator email/name and a strong `MEDINEXUS_ADMIN_PASSWORD` of at least 16 characters. Keep secrets in `.env`; never commit that file.
-4. Build and start the services:
+Production cookies are `HttpOnly`, `Secure`, and `SameSite=None`. For reliable browser session behavior, use one site with an API path reverse-proxied to the backend, or use frontend and API subdomains under the same registrable domain (for example `app.example.com` and `api.example.com`). Browsers may block cookies when the frontend and API use unrelated hosting domains even with `SameSite=None`.
 
-```sh
-docker compose up -d --build
-docker compose ps
-docker compose logs -f app
-```
+The current app has no client-side URL router: it serves its workspace at `/`. A root deployment therefore needs no SPA route rewrite. The Vite build emits the favicon and bundled assets under the site root; deploying under a subpath requires a separate Vite base-path configuration.
 
-Open `https://your-domain.example.com`. Check `https://your-domain.example.com/api/health` for the API health response. The app container is not published directly to the internet; Caddy exposes ports 80 and 443.
+## Health check
 
-Production mode requires `MEDINEXUS_PUBLIC_ORIGIN` to be an HTTPS origin, enables Secure session cookies, and rejects API writes without an allowed Origin. If you intentionally use a separate frontend origin, add it to `MEDINEXUS_CORS_ORIGINS`; production accepts only HTTPS origins without paths or credentials.
+`GET /api/health` returns a minimal service status, database connectivity state, timestamp, and application version. It responds with HTTP 200 when SQLite is reachable and HTTP 503 when the check fails. It does not include database paths, environment values, or credentials.
 
-### Maintenance and backups
+## Security considerations
 
-Useful commands:
+- Credentialed CORS uses an explicit origin allowlist. In production, configure HTTPS origins; `*` and localhost are not production defaults.
+- Production session cookies require HTTPS and use `HttpOnly`, `Secure`, and `SameSite=None`. The API rejects requests carrying an origin outside its allowlist.
+- Passwords are scrypt-hashed, SQL queries use bound parameters, and API role checks run on the server.
+- Authentication endpoints do not have application-level rate limiting. Add rate limiting at the API host or edge before opening registration to the public.
+- The repository has not had a formal security or privacy assessment. Do not use it to process real patient data, and do not describe it as compliant with a healthcare or privacy regulation.
 
-```sh
-docker compose logs --tail=200 app
-docker compose pull caddy
-docker compose up -d --build
-docker compose down
-```
+See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
 
-The named `medinexus_data` volume persists the SQLite database across container recreation. Back it up regularly and test restoring a backup before updating the app. Do not run `docker compose down -v` unless you intentionally want to delete persistent volumes.
-
-### Authentication and security guardrails
-
-The API limits login attempts (10 per client per minute by default) and registrations (5 per client per hour by default). Compose enables `MEDINEXUS_TRUST_PROXY=true` only behind Caddy, which overwrites `X-Forwarded-For` with the connecting client address. Do not enable trusted-proxy mode unless your reverse proxy does the same. These in-memory limits are for a single instance and do not replace account-lockout policy, monitoring, multi-factor authentication, or a managed identity service.
-
-**Data and clinical-safety boundary:** MediNexus is a portfolio/demo project, not a validated hospital information system. Its authorization and workflows have not been validated for real patient records, clinical decisions, or regulated healthcare use. Use synthetic data only until the application has undergone comprehensive security, privacy, operational, and clinical-safety review.

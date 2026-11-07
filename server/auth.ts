@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createSession, deleteSession, getUserBySession, type Role, type User } from './db'
-import { clearSessionCookie, parseCookies, sendError, setSessionCookie } from './http'
+import { createSession, deleteSession, getUserBySession, type Role, type User } from './db.js'
+import { clearSessionCookie, parseCookies, sendError, setSessionCookie } from './http.js'
 
 const sessionCookie = 'medinexus_session'
 
@@ -13,13 +13,13 @@ export function sessionForUser(response: ServerResponse, userId: string) {
   const token = randomBytes(32).toString('base64url')
   const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString()
   createSession(userId, expiresAt, tokenHash(token))
-  response.setHeader('Set-Cookie', setSessionCookie(token, process.env.NODE_ENV === 'production'))
+  response.setHeader('Set-Cookie', setSessionCookie(token))
 }
 
 export function clearSession(request: IncomingMessage, response: ServerResponse) {
   const token = parseCookies(request)[sessionCookie]
   if (token) deleteSession(tokenHash(token))
-  response.setHeader('Set-Cookie', clearSessionCookie(process.env.NODE_ENV === 'production'))
+  response.setHeader('Set-Cookie', clearSessionCookie())
 }
 
 export function currentUser(request: IncomingMessage): User | null {

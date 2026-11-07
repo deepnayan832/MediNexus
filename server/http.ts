@@ -26,21 +26,28 @@ export async function readJson(request: IncomingMessage, maxBytes = 64 * 1024): 
 
 export function parseCookies(request: IncomingMessage) {
   const header = request.headers.cookie ?? ''
-  return Object.fromEntries(header.split(';').map((part) => part.trim()).filter(Boolean).map((part) => {
+  return Object.fromEntries(header.split(';').map((part) => part.trim()).filter(Boolean).flatMap((part) => {
     const separator = part.indexOf('=')
-    return separator === -1 ? [part, ''] : [part.slice(0, separator), decodeURIComponent(part.slice(separator + 1))]
+    if (separator === -1) return [[part, '']]
+    try {
+      return [[part.slice(0, separator), decodeURIComponent(part.slice(separator + 1))]]
+    } catch {
+      return []
+    }
   }))
 }
 
-export function setSessionCookie(token: string, secure = process.env.NODE_ENV === 'production') {
+const isProduction = process.env.NODE_ENV === 'production'
+const sessionSameSite = isProduction ? 'None' : 'Lax'
+const secureCookieAttribute = isProduction ? '; Secure' : ''
+
+export function setSessionCookie(token: string) {
   const maxAge = 60 * 60 * 8
-  const secureAttribute = secure ? '; Secure' : ''
-  return `medinexus_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secureAttribute}`
+  return `medinexus_session=${encodeURIComponent(token)}; HttpOnly; SameSite=${sessionSameSite}; Path=/; Max-Age=${maxAge}${secureCookieAttribute}`
 }
 
-export function clearSessionCookie(secure = process.env.NODE_ENV === 'production') {
-  const secureAttribute = secure ? '; Secure' : ''
-  return `medinexus_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureAttribute}`
+export function clearSessionCookie() {
+  return `medinexus_session=; HttpOnly; SameSite=${sessionSameSite}; Path=/; Max-Age=0${secureCookieAttribute}`
 }
 
 export function asString(value: unknown, maxLength = 200) {
@@ -50,3 +57,4 @@ export function asString(value: unknown, maxLength = 200) {
 export function asNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : Number.NaN
 }
+
