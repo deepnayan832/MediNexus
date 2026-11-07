@@ -60,25 +60,30 @@ const allowedOrigins = readAllowedOrigins()
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const metricTypes = new Set(['steps', 'heart_rate', 'sleep', 'hydration', 'blood_oxygen', 'weight'])
 
-function setCorsHeaders(response: ServerResponse, origin: string) {
-  response.setHeader('Access-Control-Allow-Origin', origin)
-  response.setHeader('Access-Control-Allow-Credentials', 'true')
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-  response.setHeader('Vary', 'Origin')
+function applyCorsHeaders(response: ServerResponse, originHeader: string | undefined) {
+  if (!originHeader) return false
+  for (const allowedOrigin of allowedOrigins) {
+    if (allowedOrigin !== originHeader) continue
+    response.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+    response.setHeader('Access-Control-Allow-Credentials', 'true')
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    response.setHeader('Vary', 'Origin')
+    return true
+  }
+  return false
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse) {
-  const origin = request.headers.origin
+  const originAllowed = applyCorsHeaders(response, request.headers.origin)
   response.setHeader('Vary', 'Origin')
-  if (origin && !allowedOrigins.has(origin)) {
+  if (request.headers.origin && !originAllowed) {
     sendError(response, 403, 'This origin is not allowed to access the MediNexus API.', 'CORS_ORIGIN_NOT_ALLOWED')
     return
   }
-  if (origin) setCorsHeaders(response, origin)
 
   if (request.method === 'OPTIONS') {
-    if (!origin) {
+    if (!originAllowed) {
       sendError(response, 403, 'A valid origin is required for this preflight request.', 'CORS_ORIGIN_NOT_ALLOWED')
       return
     }
@@ -289,4 +294,3 @@ server.on('error', (error: NodeJS.ErrnoException) => {
 server.listen(port, host, () => {
   console.log(`MediNexus API listening on ${host}:${port}`)
 })
-
