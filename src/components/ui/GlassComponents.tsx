@@ -717,7 +717,7 @@ export function GlassTooltip({
   });
   
   const [visible, setVisible] = useState(false);
-  const [timeoutId, setTimeoutId] = useState<NodeJS.Timeout | null>(null);
+  const [timeoutId, setTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
   
   useEffect(() => {
     const observer = new MutationObserver(() => {

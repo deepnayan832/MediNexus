@@ -137,7 +137,7 @@ export const useStaggerReveal = <T extends HTMLElement = HTMLDivElement>(
     delay?: number;
   } = {}
 ): {
-  ref: React.RefObject<T>;
+  ref: React.RefObject<T | null>;
   controls: ReturnType<typeof useAnimation>;
   containerVariants: Variants;
   itemVariants: Variants;
@@ -214,7 +214,7 @@ export const useParallax = (speed: number = 0.5) => {
 };
 
 // Magnetic hover effect hook (GSAP)
-export const useMagnetic = <T extends HTMLElement = HTMLDivElement>(strength: number = 0.3): React.RefObject<T> => {
+export const useMagnetic = <T extends HTMLElement = HTMLDivElement>(strength: number = 0.3): React.RefObject<T | null> => {
   const ref = useRef<T>(null);
   const reducedMotion = useReducedMotion();
   
