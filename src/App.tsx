@@ -1371,7 +1371,7 @@ function ModuleView({
     {showFilterBar && <div className="filter-bar">{filterOptions.map((opt) => <button key={opt} className={`filter-pill ${statusFilter === opt ? 'active' : ''}`} onClick={() => onStatusFilterChange(opt)}>{opt}</button>)}</div>}
     <motion.div
               ref={staggerRef}
-              animate={rowControls}
+              animate={rowsIsInView ? 'visible' : 'hidden'}
               variants={containerVariants}
               initial="hidden"
               style={{ width: '100%' }}
@@ -1380,8 +1380,6 @@ function ModuleView({
                 <section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row, index) => <motion.button
                     key={row.id}
                     variants={itemVariants}
-                    initial="hidden"
-                    animate={rowControls}
                     className="module-row"
                     onClick={() => onOpenDetail(row.detail)}
                   ><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></motion.button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or reset your filter.</p></div>}</section>
