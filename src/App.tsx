@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { BentoGrid, BentoGridItem } from '@/components/ui/bento-grid'
+import { MedicalHeroScene } from '@/components/3d/MedicalHeroScene'
+import { Interactive3DCard } from '@/components/3d/Interactive3DCard'
+import { ECGWaveform } from '@/components/3d/ECGWaveform'
 import {
   checkApiHealth,
   createAdmission,
@@ -240,11 +243,23 @@ function Sparkline({ points, color }: { points: string; color: string }) {
 }
 
 function KpiCard({ kpi }: { kpi: Kpi }) {
-  return <article className="kpi-card">
-    <div className={`kpi-icon kpi-icon-${kpi.color}`}><Icon name={kpi.icon} size={22} /></div>
-    <div className="kpi-copy"><span>{kpi.label}</span><strong>{kpi.value}</strong><div className={`kpi-delta ${kpi.deltaTone}`}><Icon name={kpi.deltaTone === 'negative' ? 'alert' : kpi.deltaTone === 'positive' ? 'arrow' : 'activity'} size={12} />{kpi.delta}<small>{kpi.note}</small></div></div>
-    <Sparkline points={kpi.points} color={kpi.color} />
-  </article>
+  return (
+    <Interactive3DCard as="article" className="kpi-card" maxTilt={7} scale={1.02}>
+      <div className={`kpi-icon kpi-icon-${kpi.color}`}>
+        <Icon name={kpi.icon} size={22} />
+      </div>
+      <div className="kpi-copy">
+        <span>{kpi.label}</span>
+        <strong>{kpi.value}</strong>
+        <div className={`kpi-delta ${kpi.deltaTone}`}>
+          <Icon name={kpi.deltaTone === 'negative' ? 'alert' : kpi.deltaTone === 'positive' ? 'arrow' : 'activity'} size={12} />
+          {kpi.delta}
+          <small>{kpi.note}</small>
+        </div>
+      </div>
+      <Sparkline points={kpi.points} color={kpi.color} />
+    </Interactive3DCard>
+  )
 }
 
 function FlowChart({ range }: { range: 'Today' | '7d' | '30d' }) {
@@ -926,10 +941,69 @@ function App() {
 
       <section className="page-content">
         {isDashboard ? <>
-          <div className="page-heading">
-            <div><h1>Good morning, {profile.name}</h1><p className="page-subtitle">{role === 'Patient' ? 'Your care plan, appointments, and next steps in one place.' : "Here is today's care overview"}</p></div>
-            <div className="heading-actions"><button className="button button-primary" onClick={() => setModal('appointment')}><Icon name="calendar" size={18} />{role === 'Patient' ? 'Book appointment' : 'New appointment'}</button><button className="button button-danger" onClick={() => setModal('emergency')}><Icon name="alert" size={18} />Emergency access</button></div>
-          </div>
+          <section className="hero-command-center" aria-label="Hospital Operations Hero Command Center">
+            <div className="hero-command-grid">
+              <div className="hero-command-info">
+                <div className="hero-status-pill">
+                  <span className="hero-status-pulse" />
+                  <span>3D CLINICAL INTELLIGENCE · LIVE TELEMETRY</span>
+                </div>
+                <h1 className="hero-headline">
+                  Welcome, {profile.name} — <span className="hero-headline-gradient">{role === 'Patient' ? 'Connected Care Portal' : `${profile.workspace} Hub`}</span>
+                </h1>
+                <p className="hero-description">
+                  {role === 'Patient'
+                    ? 'Track your real-time recovery milestones, active prescriptions, clinician consults, and connected biometrics in one unified view.'
+                    : role === 'Doctor'
+                    ? 'Review prioritized patient caseloads, clinical alerts, diagnostic orders, and live biometric vitals with instant operational response.'
+                    : role === 'Staff'
+                    ? 'Coordinate front-desk admissions, inpatient ward beds, emergency triage queue, and billing workflows seamlessly.'
+                    : 'Real-time hospital operations telemetry: orchestrate capacity, bed occupancy, emergency triage, and interdepartmental clinical throughput.'}
+                </p>
+                <div className="hero-actions-row">
+                  <button className="button button-primary" onClick={() => setModal('appointment')}>
+                    <Icon name="calendar" size={18} />
+                    {role === 'Patient' ? 'Book appointment' : 'New appointment'}
+                  </button>
+                  <button className="button button-danger" onClick={() => setModal('emergency')}>
+                    <Icon name="alert" size={18} />
+                    Emergency access
+                  </button>
+                  <button className="button button-soft" onClick={() => handleAction('Hospital operational telemetry verified online', 'success')}>
+                    <Icon name="activity" size={17} />
+                    Verify Telemetry
+                  </button>
+                </div>
+                <div className="hero-metrics-strip">
+                  <div className="hero-metric-item">
+                    <strong>99.8%</strong>
+                    <span>System Health</span>
+                  </div>
+                  <div className="hero-metric-item">
+                    <strong>&lt; 16 ms</strong>
+                    <span>Stream Latency</span>
+                  </div>
+                  <div className="hero-metric-item">
+                    <strong>{liveAppointments.length || 48} Visits</strong>
+                    <span>Scheduled Today</span>
+                  </div>
+                </div>
+              </div>
+
+              <MedicalHeroScene
+                activeRole={role}
+                onAction={(msg) => handleAction(msg, 'tap')}
+              />
+            </div>
+          </section>
+
+          {/* Real-time ECG Waveform Telemetry Monitor */}
+          <ECGWaveform
+            bpm={role === 'Patient' ? 72 : 76}
+            color={role === 'Patient' ? '#10b981' : '#14b8a6'}
+            height={90}
+            onAction={(msg) => handleAction(msg, 'tap')}
+          />
           <div className="kpi-grid">{kpis.map((kpi) => <KpiCard key={kpi.label} kpi={kpi} />)}</div>
           <section className="bento-section" aria-labelledby="care-highlights-title">
             <div className="bento-section-heading">
@@ -966,10 +1040,26 @@ function App() {
           </section>
           {role === 'Patient' ? <PatientDashboard remoteMetrics={remoteHealthMetrics} onAction={handleAction} onOpenDetail={openDetail} onOpenLog={() => setModal('health_metric')} /> : <>
             <div className="main-grid">
-              <section className="panel schedule-panel"><div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule ({liveAppointments.length})</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div><div className="schedule-list">{(liveAppointments.length ? liveAppointments : []).slice(0, showAllSchedule ? liveAppointments.length : 6).map((item) => { const dateStr = new Date(item.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); return <button key={item.id} className={`schedule-row ${selectedAppointment === item.id ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.id); openDetail({ eyebrow: 'Appointment', title: item.patientName || item.patientId, meta: `${dateStr} · ${item.department} · ${item.clinicianName}`, tone: 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: dateStr }, { label: 'Room', value: item.room }, { label: 'Clinician', value: item.clinicianName }, { label: 'Status', value: item.status }], actionLabel: item.status !== 'Completed' ? 'Mark Completed' : undefined, actionType: 'complete_appointment', rawId: item.id }); handleAction(`Appointment selected`, 'tap') }}><span className="schedule-time">{dateStr}</span><span className="schedule-dot dot-cyan" /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.patientName || item.patientId}</strong><small>{item.department} · {item.clinicianName}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button> })}</div></section>
-              <section className="panel flow-panel"><div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div><div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div><FlowChart range={range} /><div className="flow-insights"><div><Icon name="people" size={22} /><strong>{dashboardSummary?.openEmergency ?? 18}<small>Currently in ED</small></strong><span className="insight-bad">▲ Active</span></div><div><Icon name="bed" size={22} /><strong>{dashboardSummary?.criticalEmergency ?? 3}<small>Waiting for bed</small></strong><span className="insight-bad">▲ Critical</span></div><div><Icon name="clock" size={22} /><strong>28 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ Fast track</span></div><div><Icon name="arrow" size={22} /><strong>14<small>Discharges today</small></strong><span className="insight-good">▲ Target met</span></div></div></section>
+              <Interactive3DCard as="section" className="panel schedule-panel" maxTilt={3}>
+                <div className="panel-heading"><div><span className="eyebrow">{role === 'Doctor' ? 'Your day' : 'Live schedule'}</span><h2>Today's schedule ({liveAppointments.length})</h2></div><button className="text-button" onClick={() => setShowAllSchedule((open) => !open)}>{showAllSchedule ? 'Show less' : 'View all'} <Icon name="arrow" size={15} /></button></div>
+                <div className="schedule-list">{(liveAppointments.length ? liveAppointments : []).slice(0, showAllSchedule ? liveAppointments.length : 6).map((item) => { const dateStr = new Date(item.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); return <button key={item.id} className={`schedule-row ${selectedAppointment === item.id ? 'selected' : ''}`} onClick={() => { setSelectedAppointment(item.id); openDetail({ eyebrow: 'Appointment', title: item.patientName || item.patientId, meta: `${dateStr} · ${item.department} · ${item.clinicianName}`, tone: 'cyan', icon: 'calendar', facts: [{ label: 'Time', value: dateStr }, { label: 'Room', value: item.room }, { label: 'Clinician', value: item.clinicianName }, { label: 'Status', value: item.status }], actionLabel: item.status !== 'Completed' ? 'Mark Completed' : undefined, actionType: 'complete_appointment', rawId: item.id }); handleAction(`Appointment selected`, 'tap') }}><span className="schedule-time">{dateStr}</span><span className="schedule-dot dot-cyan" /><span className="schedule-connector" /><span className="schedule-patient"><strong>{item.patientName || item.patientId}</strong><small>{item.department} · {item.clinicianName}</small></span><span className="schedule-room">{item.room}</span><Icon name="chevron" size={15} /></button> })}</div>
+              </Interactive3DCard>
+              <Interactive3DCard as="section" className="panel flow-panel" maxTilt={3}>
+                <div className="panel-heading flow-heading"><div><span className="eyebrow">Throughput</span><h2>Patient flow</h2></div><div className="flow-actions"><div className="legend"><span><i className="legend-dot cyan" />Inpatients</span><span><i className="legend-dot violet" />ED visits</span><span><i className="legend-dot mint" />Discharges</span></div><span className="live-status"><i />Live</span></div></div>
+                <div className="flow-toolbar"><span className="flow-updated"><Icon name="activity" size={15} />Updated just now</span><div className="range-picker">{(['Today', '7d', '30d'] as const).map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>)}</div></div>
+                <FlowChart range={range} />
+                <div className="flow-insights"><div><Icon name="people" size={22} /><strong>{dashboardSummary?.openEmergency ?? 18}<small>Currently in ED</small></strong><span className="insight-bad">▲ Active</span></div><div><Icon name="bed" size={22} /><strong>{dashboardSummary?.criticalEmergency ?? 3}<small>Waiting for bed</small></strong><span className="insight-bad">▲ Critical</span></div><div><Icon name="clock" size={22} /><strong>28 min<small>Avg. ED wait time</small></strong><span className="insight-good">▲ Fast track</span></div><div><Icon name="arrow" size={22} /><strong>14<small>Discharges today</small></strong><span className="insight-good">▲ Target met</span></div></div>
+              </Interactive3DCard>
             </div>
-            <div className="bottom-grid"><section className="panel activity-panel"><div className="panel-heading"><div><span className="eyebrow">Across the network</span><h2>Care team activity</h2></div><button className="text-button" onClick={() => openDetail({ eyebrow: 'Network Activity', title: 'Live Clinical Activity', meta: 'Real-time telemetry and clinical events', tone: 'cyan', icon: 'activity', facts: [{ label: 'Status', value: 'Nominal' }, { label: 'Audit Records', value: 'Encrypted & active' }] })}>View all <Icon name="arrow" size={15} /></button></div><div className="activity-list"><div className="activity-row"><span className="avatar avatar-cyan">ER</span><span className="activity-time">Just now</span><div className="activity-copy"><strong>Dr. Elena Ruiz</strong><small>Signed cardiology consultation note</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-mint">JW</span><span className="activity-time">8 min ago</span><div className="activity-copy"><strong>James Wilson</strong><small>Assigned patient to Ward A bed 102</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-coral">ED</span><span className="activity-time">14 min ago</span><div className="activity-copy"><strong>Triage Team</strong><small>Admitted Level 2 cardiac emergency</small></div><span className="status status-attention">In Treatment</span></div></div></section><EmergencyPanel onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} /></div>
+            <div className="bottom-grid">
+              <Interactive3DCard as="section" className="panel activity-panel" maxTilt={3}>
+                <div className="panel-heading"><div><span className="eyebrow">Across the network</span><h2>Care team activity</h2></div><button className="text-button" onClick={() => openDetail({ eyebrow: 'Network Activity', title: 'Live Clinical Activity', meta: 'Real-time telemetry and clinical events', tone: 'cyan', icon: 'activity', facts: [{ label: 'Status', value: 'Nominal' }, { label: 'Audit Records', value: 'Encrypted & active' }] })}>View all <Icon name="arrow" size={15} /></button></div>
+                <div className="activity-list"><div className="activity-row"><span className="avatar avatar-cyan">ER</span><span className="activity-time">Just now</span><div className="activity-copy"><strong>Dr. Elena Ruiz</strong><small>Signed cardiology consultation note</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-mint">JW</span><span className="activity-time">8 min ago</span><div className="activity-copy"><strong>James Wilson</strong><small>Assigned patient to Ward A bed 102</small></div><span className="status status-success">Completed</span></div><div className="activity-row"><span className="avatar avatar-coral">ED</span><span className="activity-time">14 min ago</span><div className="activity-copy"><strong>Triage Team</strong><small>Admitted Level 2 cardiac emergency</small></div><span className="status status-attention">In Treatment</span></div></div>
+              </Interactive3DCard>
+              <Interactive3DCard as="div" maxTilt={3}>
+                <EmergencyPanel onEmergency={() => setModal('emergency')} onOpenDetail={openDetail} />
+              </Interactive3DCard>
+            </div>
           </>}
         </> : <ModuleView
           activeNav={activeNav}
@@ -1044,7 +1134,25 @@ function PatientDashboard({ remoteMetrics, onAction, onOpenDetail, onOpenLog }: 
     actionLabel: 'Reschedule appointment',
   }
   return <>
-    <div className="patient-grid"><section className="panel care-plan-panel"><div className="patient-hero"><div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div><div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>94<small>%</small></strong></div></div><div className="plan-steps"><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div><div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Synced via API metrics</small></div></div><div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>Cardiology follow-up</strong><small>Thursday · 10:30 AM</small></div><button className="text-button" onClick={() => onOpenDetail(appointmentDetail)}>Details <Icon name="arrow" size={15} /></button></div></div></section><section className="panel next-visit-panel"><div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>Cardiology follow-up</h2></div><button className="icon-button ghost" aria-label="More appointment options" onClick={() => onOpenDetail(appointmentDetail)}><Icon name="more" size={17} /></button></div><div className="visit-date"><span className="visit-day">18</span><div><strong>Thursday, September 18</strong><small>10:30 AM · Room 301</small></div></div><div className="doctor-line"><span className="avatar avatar-cyan">ER</span><div><strong>Dr. Elena Ruiz</strong><small>Cardiology</small></div><button className="icon-button ghost" aria-label="Message Dr. Elena Ruiz" onClick={() => onAction('Message composer opened', 'tap')}><Icon name="message" size={17} /></button></div><button className="button button-soft button-full" onClick={() => onOpenDetail(appointmentDetail)}>View appointment details <Icon name="arrow" size={16} /></button></section></div>
+    <div className="patient-grid">
+      <Interactive3DCard as="section" className="panel care-plan-panel" maxTilt={4}>
+        <div className="patient-hero">
+          <div><span className="eyebrow">Care plan progress</span><h2>Your recovery is on track</h2><p>Keep following your care plan to stay ahead of your next milestone.</p></div>
+          <div className="progress-ring"><svg viewBox="0 0 80 80"><circle className="ring-track" cx="40" cy="40" r="32" /><circle className="ring-value" cx="40" cy="40" r="32" /></svg><strong>94<small>%</small></strong></div>
+        </div>
+        <div className="plan-steps">
+          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Medication plan</strong><small>Completed today at 08:12</small></div></div>
+          <div className="plan-step complete"><span><Icon name="check" size={15} /></span><div><strong>Daily health check-in</strong><small>Synced via API metrics</small></div></div>
+          <div className="plan-step upcoming"><span><Icon name="calendar" size={15} /></span><div><strong>Cardiology follow-up</strong><small>Thursday · 10:30 AM</small></div><button className="text-button" onClick={() => onOpenDetail(appointmentDetail)}>Details <Icon name="arrow" size={15} /></button></div>
+        </div>
+      </Interactive3DCard>
+      <Interactive3DCard as="section" className="panel next-visit-panel" maxTilt={4}>
+        <div className="panel-heading"><div><span className="eyebrow">Next visit</span><h2>Cardiology follow-up</h2></div><button className="icon-button ghost" aria-label="More appointment options" onClick={() => onOpenDetail(appointmentDetail)}><Icon name="more" size={17} /></button></div>
+        <div className="visit-date"><span className="visit-day">18</span><div><strong>Thursday, September 18</strong><small>10:30 AM · Room 301</small></div></div>
+        <div className="doctor-line"><span className="avatar avatar-cyan">ER</span><div><strong>Dr. Elena Ruiz</strong><small>Cardiology</small></div><button className="icon-button ghost" aria-label="Message Dr. Elena Ruiz" onClick={() => onAction('Message composer opened', 'tap')}><Icon name="message" size={17} /></button></div>
+        <button className="button button-soft button-full" onClick={() => onOpenDetail(appointmentDetail)}>View appointment details <Icon name="arrow" size={16} /></button>
+      </Interactive3DCard>
+    </div>
     <HealthTracker compact remoteMetrics={remoteMetrics} onAction={onAction} onOpenDetail={onOpenDetail} onOpenLog={onOpenLog} />
   </>
 }
@@ -1120,10 +1228,11 @@ function ModuleView({
 
   const filterOptions = ['All', 'Stable', 'Confirmed', 'Completed', 'In stock', 'Low stock', 'Active', 'Paid', 'Pending']
 
-  return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and confidence.</p></div><div className="heading-actions"><button className="button button-primary" onClick={onOpenCreateModal}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div>
+  return <div className="module-page"><div className="page-heading"><div><p className="eyebrow">Workspace module · Telemetry Active</p><h1>{activeNav}</h1><p className="page-subtitle">Manage connected care workflows with clarity and precision.</p></div><div className="heading-actions"><button className="button button-primary" onClick={onOpenCreateModal}><Icon name="plus" size={18} />Create new</button>{isEmergency && <button className="button button-danger" onClick={onEmergency}><Icon name="alert" size={18} />Emergency access</button>}</div></div>
+    {isEmergency && <ECGWaveform bpm={96} color="#f43f5e" height={75} onAction={(msg) => onAction(msg, 'tap')} />}
     <div className="module-toolbar"><div className="module-count"><strong>{rows.length}</strong> active records {search && <span>matching “{search}”</span>}</div><div className="module-tools"><button className={`button ${showFilterBar ? 'button-primary' : 'button-soft'}`} onClick={onToggleFilterBar}><Icon name="filter" size={17} />Filter</button><button className="button button-soft" onClick={onExport}><Icon name="download" size={17} />Export CSV</button></div></div>
     {showFilterBar && <div className="filter-bar">{filterOptions.map((opt) => <button key={opt} className={`filter-pill ${statusFilter === opt ? 'active' : ''}`} onClick={() => onStatusFilterChange(opt)}>{opt}</button>)}</div>}
-    <section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row) => <button className="module-row" key={row.id} onClick={() => onOpenDetail(row.detail)}><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' ? 'alert' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or reset your filter.</p></div>}</section>
+    <section className="panel module-table"><div className="module-table-header"><span>Record</span><span>Details</span><span>Status / value</span><span /></div>{rows.length ? rows.map((row) => <button className="module-row" key={row.id} onClick={() => onOpenDetail(row.detail)}><span className="module-record"><span className={`module-symbol symbol-${row.tone}`}><Icon name={activeNav === 'Patients' || activeNav === 'My patients' ? 'people' : activeNav === 'Appointments' ? 'calendar' : activeNav === 'Emergency' || activeNav === 'Queue management' ? 'alert' : activeNav === 'Pharmacy' || activeNav === 'Prescriptions' ? 'pharmacy' : activeNav === 'Inpatient Care' || activeNav === 'Beds & wards' ? 'bed' : activeNav === 'Lab & Diagnostics' || activeNav === 'Lab results' || activeNav === 'Lab reports' ? 'flask' : activeNav === 'Billing & Revenue' || activeNav === 'Billing support' || activeNav === 'Bills & insurance' ? 'reports' : 'activity'} size={18} /></span><strong>{row.label}</strong></span><span className="module-meta">{row.meta}</span><span className={`module-value module-value-${row.tone}`}><i />{row.value}</span><Icon name="chevron" size={16} /></button>) : <div className="empty-state"><span><Icon name="search" size={22} /></span><h2>No matching records</h2><p>Try a different search term or reset your filter.</p></div>}</section>
   </div>
 }
 
