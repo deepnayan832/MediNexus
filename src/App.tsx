@@ -900,7 +900,7 @@ function App() {
 
   const unreadCount = notifications.filter((n) => !n.readAt).length
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${mobileNavOpen ? 'mobile-nav-open' : ''}`}>
     <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
       <div className="brand"><BrandMark /><div><strong>MediNexus</strong><span>Unified Hospital Management</span></div></div>
       <div className="sidebar-workspace">
