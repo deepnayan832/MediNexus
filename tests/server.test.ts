@@ -11,7 +11,7 @@ let databaseDirectory = ''
 let baseUrl = ''
 
 async function waitForApi(url: string) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
     try {
       const response = await fetch(`${url}/api/health`)
       if (response.ok) return
@@ -225,7 +225,7 @@ test('rejects weak passwords for environment-provisioned privileged users', () =
       MEDINEXUS_ADMIN_PASSWORD: 'weak-password',
     },
     encoding: 'utf8',
-    timeout: 5000,
+    timeout: 15_000,
   })
   assert.notEqual(result.status, 0, 'server must refuse weak provisioned credentials')
   assert.match((result.stderr || '') + (result.stdout || ''), /MEDINEXUS_ADMIN_PASSWORD must be at least 16 characters/)

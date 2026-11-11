@@ -58,9 +58,10 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
     cameraRef.current = camera
 
     // Renderer setup
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
+    const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches
+    const renderer = new THREE.WebGLRenderer({ antialias: !isCoarsePointer, alpha: true, powerPreference: 'high-performance' })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isCoarsePointer ? 1.25 : 1.5))
     renderer.setSize(width, height)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.2
     rendererRef.current = renderer
@@ -133,7 +134,7 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
     let isMouseDown = false
     let prevMousePos = { x: 0, y: 0 }
 
-    const onMouseMove = (event: MouseEvent) => {
+    const onPointerMove = (event: PointerEvent) => {
       const rect = container.getBoundingClientRect()
       const x = ((event.clientX - rect.left) / rect.width) * 2 - 1
       const y = -((event.clientY - rect.top) / rect.height) * 2 + 1
@@ -149,20 +150,29 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
       }
     }
 
-    const onMouseDown = (event: MouseEvent) => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return
       isMouseDown = true
       setIsDragging(true)
       prevMousePos = { x: event.clientX, y: event.clientY }
+      container.setPointerCapture(event.pointerId)
     }
 
-    const onMouseUp = () => {
+    const onPointerUp = (event: PointerEvent) => {
+      isMouseDown = false
+      setIsDragging(false)
+      if (container.hasPointerCapture(event.pointerId)) container.releasePointerCapture(event.pointerId)
+    }
+
+    const onPointerCancel = () => {
       isMouseDown = false
       setIsDragging(false)
     }
 
-    container.addEventListener('mousemove', onMouseMove)
-    container.addEventListener('mousedown', onMouseDown)
-    window.addEventListener('mouseup', onMouseUp)
+    container.addEventListener('pointermove', onPointerMove)
+    container.addEventListener('pointerdown', onPointerDown)
+    container.addEventListener('pointerup', onPointerUp)
+    container.addEventListener('pointercancel', onPointerCancel)
 
     // Resize observer
     const resizeObserver = new ResizeObserver(() => {
@@ -178,16 +188,27 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
     resizeObserver.observe(container)
 
     // Animation Loop
-    let clock = new THREE.Clock()
+    const animationStart = performance.now()
+    let elapsedTime = 0
     let frameCount = 0
     let lastFpsUpdate = 0
+    let lastFrameAt = 0
+    let isInView = true
 
     const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const frameInterval = 1000 / (isCoarsePointer ? 30 : 45)
 
-    const animate = () => {
+    const animate = (now: number) => {
+      if (!isInView || document.hidden) {
+        animFrameId.current = null
+        return
+      }
       animFrameId.current = requestAnimationFrame(animate)
+      if (now - lastFrameAt < frameInterval) return
+      const frameScale = lastFrameAt ? Math.min((now - lastFrameAt) / (1000 / 60), 2) : 1
+      lastFrameAt = now
 
-      const elapsedTime = clock.getElapsedTime()
+      elapsedTime = (now - animationStart) / 1000
       frameCount++
 
       if (elapsedTime - lastFpsUpdate >= 1) {
@@ -199,10 +220,11 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
       // Smooth damped rotation
       if (!prefersReducedMotion) {
         if (!isMouseDown) {
-          targetRotationY += 0.003
+          targetRotationY += 0.003 * frameScale
         }
-        mainGroup.rotation.y += (targetRotationY + mouseX * 0.35 - mainGroup.rotation.y) * 0.06
-        mainGroup.rotation.x += (targetRotationX - mouseY * 0.25 - mainGroup.rotation.x) * 0.06
+        const damping = 1 - Math.pow(1 - 0.06, frameScale)
+        mainGroup.rotation.y += (targetRotationY + mouseX * 0.35 - mainGroup.rotation.y) * damping
+        mainGroup.rotation.x += (targetRotationX - mouseY * 0.25 - mainGroup.rotation.x) * damping
 
         // Gentle floating
         mainGroup.position.y = Math.sin(elapsedTime * 1.5) * 0.18
@@ -222,14 +244,46 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
       renderer.render(scene, camera)
     }
 
-    animate()
+    const stopAnimation = () => {
+      if (animFrameId.current !== null) {
+        cancelAnimationFrame(animFrameId.current)
+        animFrameId.current = null
+      }
+      lastFrameAt = 0
+      frameCount = 0
+      lastFpsUpdate = elapsedTime
+    }
+
+    const startAnimation = () => {
+      if (animFrameId.current === null && isInView && !document.hidden) {
+        animFrameId.current = requestAnimationFrame(animate)
+      }
+    }
+
+    const onVisibilityChange = () => {
+      if (document.hidden) stopAnimation()
+      else startAnimation()
+    }
+
+    const intersectionObserver = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(([entry]) => {
+      isInView = entry.isIntersecting
+      if (isInView) startAnimation()
+      else stopAnimation()
+    }, { rootMargin: '80px' })
+
+    intersectionObserver?.observe(container)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    startAnimation()
 
     // Cleanup
     return () => {
-      if (animFrameId.current) cancelAnimationFrame(animFrameId.current)
-      container.removeEventListener('mousemove', onMouseMove)
-      container.removeEventListener('mousedown', onMouseDown)
-      window.removeEventListener('mouseup', onMouseUp)
+      stopAnimation()
+      intersectionObserver?.disconnect()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      container.removeEventListener('pointermove', onPointerMove)
+      container.removeEventListener('pointerdown', onPointerDown)
+      container.removeEventListener('pointerup', onPointerUp)
+      container.removeEventListener('pointercancel', onPointerCancel)
       resizeObserver.disconnect()
       renderer.dispose()
       particleGeometry.dispose()
@@ -410,18 +464,18 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
   }
 
   function clearGroup(group: THREE.Group) {
-    while (group.children.length > 0) {
-      const child = group.children[0]
+    const geometries = new Set<THREE.BufferGeometry>()
+    const materials = new Set<THREE.Material>()
+    group.traverse((child) => {
       if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points) {
-        if (child.geometry) child.geometry.dispose()
-        if (Array.isArray(child.material)) {
-          child.material.forEach((m) => m.dispose())
-        } else if (child.material) {
-          child.material.dispose()
-        }
+        geometries.add(child.geometry)
+        const childMaterials = Array.isArray(child.material) ? child.material : [child.material]
+        childMaterials.forEach((material) => materials.add(material))
       }
-      group.remove(child)
-    }
+    })
+    geometries.forEach((geometry) => geometry.dispose())
+    materials.forEach((material) => material.dispose())
+    group.clear()
   }
 
   return (
@@ -434,7 +488,7 @@ export function MedicalHeroScene({ className = '', activeRole = 'Admin', onActio
         <div
           ref={mountRef}
           className={`hero-3d-canvas-container ${isDragging ? 'is-dragging' : ''}`}
-          title="Click and drag to rotate in 3D"
+          title="Drag to rotate in 3D"
         />
       ) : (
         <div className="hero-3d-fallback" aria-hidden="true">

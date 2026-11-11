@@ -428,6 +428,10 @@ body::after {
   transition: all 0.25s ease;
 }
 
+.hero-3d-canvas-container {
+  touch-action: pan-y;
+}
+
 .mobile-menu {
   display: none;
 }
@@ -2854,12 +2858,27 @@ html[data-theme='dark'] .toast {
   .mobile-menu {
     display: inline-grid;
   }
+  .app-shell.mobile-nav-open .topbar {
+    z-index: 35;
+    pointer-events: none;
+  }
+  .app-shell.mobile-nav-open .mobile-menu {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 1;
+    pointer-events: auto;
+    color: #fff;
+    background: var(--navy-2);
+    border-color: rgba(255, 255, 255, 0.24);
+    box-shadow: 0 8px 22px rgba(5, 16, 15, 0.4);
+  }
   .main-grid, .bottom-grid, .patient-grid {
     grid-template-columns: 1fr;
   }
   .mobile-scrim {
     position: fixed;
-    z-index: 28;
+    z-index: 24;
     inset: 0;
     display: block;
     border: 0;
@@ -2877,8 +2896,31 @@ html[data-theme='dark'] .toast {
     height: auto;
     min-height: 70px;
     flex-wrap: wrap;
+    gap: 8px 12px;
     padding-top: 10px;
     padding-bottom: 10px;
+  }
+  .workspace-select-wrap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .workspace-select {
+    width: 100%;
+    min-width: 0;
+  }
+  .topbar-actions {
+    order: 2;
+    flex: 0 0 auto;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .api-status {
+    order: 3;
+    margin-left: auto;
+  }
+  .topbar-divider,
+  .profile-copy {
+    display: none;
   }
   .global-search {
     order: 4;
@@ -2894,6 +2936,37 @@ html[data-theme='dark'] .toast {
   .medical-hero-3d-wrap {
     height: 300px;
   }
+  .hero-3d-hud {
+    padding: 12px;
+  }
+  .hero-3d-hud__top,
+  .hero-3d-hud__bottom {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .hero-telemetry-badge {
+    max-width: 100%;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 5px 8px;
+  }
+  .hero-mode-selector {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .hero-mode-btn {
+    padding: 5px 8px;
+    font-size: 10px;
+  }
+  .hero-3d-hint,
+  .hero-3d-status-capsule {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .hero-3d-status-capsule {
+    gap: 6px;
+  }
   .health-metric-grid {
     grid-template-columns: repeat(2, 1fr);
     padding: 12px;
@@ -2901,6 +2974,45 @@ html[data-theme='dark'] .toast {
   .health-visuals {
     grid-template-columns: 1fr;
     padding: 0 12px;
+  }
+  .flow-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .flow-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px 12px;
+  }
+  .legend {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .flow-insights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-inline: 16px;
+  }
+  .flow-insights > div {
+    grid-template-columns: 24px minmax(0, 1fr);
+    padding: 10px 8px;
+  }
+  .flow-insights > div:nth-child(odd) {
+    padding-left: 0;
+  }
+  .flow-insights > div:nth-child(even) {
+    padding-right: 0;
+    border-right: 0;
+  }
+  .flow-insights > div:nth-child(-n + 2) {
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+  .flow-insights > div:nth-child(n + 3) {
+    padding-top: 12px;
+  }
+  .flow-insights strong small {
+    white-space: normal;
   }
   .module-table-header {
     display: none;
