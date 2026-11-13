@@ -36,19 +36,21 @@
   flex-direction: column;
   justify-content: space-between;
   gap: 18px;
-  padding: 16px;
+  padding: 18px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 15px;
-  background: var(--surface);
-  box-shadow: 0 10px 28px rgba(25, 49, 91, .045);
-  transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  border-radius: 18px;
+  background: var(--surface-glass);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15), 0 10px 28px rgba(18, 64, 54, .06);
+  transition: transform .24s cubic-bezier(0.16, 1, 0.3, 1), box-shadow .24s ease, border-color .24s ease;
 }
 
 .bento-grid-item:hover {
-  transform: translateY(-3px);
-  border-color: rgba(25, 197, 209, .35);
-  box-shadow: 0 17px 34px rgba(25, 49, 91, .09);
+  transform: translateY(-4px) scale(1.01);
+  border-color: rgba(31, 224, 206, .45);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 22px 45px -10px rgba(31, 224, 206, .2);
 }
 
 .bento-grid-item__header {

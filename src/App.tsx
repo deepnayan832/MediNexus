@@ -296,9 +296,9 @@ function App() {
   const [statusFilter, setStatusFilter] = useState('All')
   const [showFilterBar, setShowFilterBar] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === 'undefined') return 'light'
+    if (typeof window === 'undefined') return 'dark'
     const saved = window.localStorage.getItem('medinexus-theme')
-    return saved === 'dark' ? 'dark' : 'light'
+    return saved === 'light' ? 'light' : 'dark'
   })
   const [soundEnabled, setSoundEnabled] = useState(false)
   const [hapticsEnabled, setHapticsEnabled] = useState(false)
